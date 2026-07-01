@@ -150,9 +150,11 @@ def init_cameras(
 
 
 def init_xense(gripper_id: str, name: str = "Xense"):
-    from xensegripper import XenseGripper
+    from r3kit.devices.gripper.xense.xense import Xense
 
-    return XenseGripper.create(mac_addr=gripper_id)
+    gripper = Xense(id=gripper_id, name=name)
+    gripper.block(blocking=False)
+    return gripper
 
 
 class AnglerGripperController:

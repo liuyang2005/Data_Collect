@@ -176,6 +176,57 @@ def install_fake_pyrealsense2(monkeypatch):
     return state
 
 
+def test_init_xense_uses_r3kit_wrapper_and_nonblocking_mode(monkeypatch):
+    dcu = import_dual_collect_utils()
+    calls = {}
+
+    class FakeXense:
+        def __init__(self, id, name):
+            calls["id"] = id
+            calls["name"] = name
+            self.blocking = None
+
+        def block(self, blocking):
+            calls["blocking"] = blocking
+            self.blocking = blocking
+
+    class UnexpectedXenseGripper:
+        @staticmethod
+        def create(*args, **kwargs):
+            raise AssertionError("init_xense should use the r3kit Xense wrapper")
+
+    for module_name in [
+        "r3kit",
+        "r3kit.devices",
+        "r3kit.devices.gripper",
+        "r3kit.devices.gripper.xense",
+    ]:
+        monkeypatch.setitem(sys.modules, module_name, types.ModuleType(module_name))
+
+    r3kit_xense_module = types.ModuleType("r3kit.devices.gripper.xense.xense")
+    r3kit_xense_module.Xense = FakeXense
+    monkeypatch.setitem(
+        sys.modules,
+        "r3kit.devices.gripper.xense.xense",
+        r3kit_xense_module,
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "xensegripper",
+        types.SimpleNamespace(XenseGripper=UnexpectedXenseGripper),
+    )
+
+    gripper = dcu.init_xense("1659f0e0dde0", "slave_xense")
+
+    assert isinstance(gripper, FakeXense)
+    assert calls == {
+        "id": "1659f0e0dde0",
+        "name": "slave_xense",
+        "blocking": False,
+    }
+    assert gripper.blocking is False
+
+
 def test_realsense_d415_matches_r3kit_core_frame_alignment_and_calibration(monkeypatch):
     dcu = import_dual_collect_utils()
     state = install_fake_pyrealsense2(monkeypatch)
