@@ -93,8 +93,17 @@ def build_metadata(args, camera_serials, tdk_tcp_pose_order, saved_tcp_pose_orde
             "camera_serials": camera_serials,
             "recorded_robot": "second",
             "tcp_pose_source": "CartesianTeleopLAN.robot_states()[1].tcp_pose",
+            "ext_wrench_in_tcp_source": (
+                "CartesianTeleopLAN.robot_states()[1].ext_wrench_in_tcp"
+            ),
             "tdk_tcp_pose_order": tdk_tcp_pose_order,
             "saved_tcp_pose_order": saved_tcp_pose_order,
+            "robot_stream_files": {
+                "tcps": "tcps.npy",
+                "angles": "angles.npy",
+                "ext_wrench_in_tcp": "ext_wrench_in_tcp.npy",
+                "timestamps": "*_timestamps_host_s.npy",
+            },
             "master_gripper_width_source": (
                 "disabled"
                 if not args.use_gripper

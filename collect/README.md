@@ -36,7 +36,7 @@ python collect/dual_collect.py \
 
 ## 不采集夹爪
 
-如果本次不需要初始化和采集夹爪：
+默认会初始化和采集夹爪。如果本次不需要夹爪：
 
 ```bash
 python collect/dual_collect.py \
@@ -46,7 +46,7 @@ python collect/dual_collect.py \
   --use-gripper false
 ```
 
-此时不会初始化 Xense，保存的夹爪宽度固定为 `0.0`。
+此时不会初始化 Xense 和 Angler，保存的夹爪宽度固定为 `0.0`。
 
 ## 常用可选参数
 
@@ -90,20 +90,21 @@ record_YYYYmmdd_HHMMSS/
   cam_327322062498/
     color/
     depth/
-  cam_319522062799/
-    color/
-    depth/
-  tcps/
-    tcp_00000.npy
-  angles/
-    angle_00000.npy
+  tcps.npy
+  tcps_timestamps_host_s.npy
+  angles.npy
+  angles_timestamps_host_s.npy
+  ext_wrench_in_tcp.npy
+  ext_wrench_in_tcp_timestamps_host_s.npy
   metadata.json
 ```
 
 保存格式：
 
-- `tcps/tcp_*.npy`：`[x, y, z, qx, qy, qz, qw, gripper_width]`
-- `angles/angle_*.npy`：`[q1, q2, q3, q4, q5, q6, q7, gripper_width]`
+- `tcps.npy`：`(T, 8)`，每行 `[x, y, z, qx, qy, qz, qw, gripper_width]`
+- `angles.npy`：`(T, 8)`，每行 `[q1, q2, q3, q4, q5, q6, q7, gripper_width]`
+- `ext_wrench_in_tcp.npy`：`(T, 6)`，每行来自从臂 `RobotStates.ext_wrench_in_tcp`
+- `*_timestamps_host_s.npy`：`(T,)`，对应数据采样时的主机时间戳，单位秒
 
 其中 TCP 数据记录的是从臂状态。
 

@@ -152,6 +152,19 @@ class CartesianTeleopPair:
         tcp_xyz, tcp_quat_xyzw = tdk_pose_to_saved_xyzquat(tcp_pose)
         return tcp_xyz, tcp_quat_xyzw, joint_angles
 
+    def read_slave_robot_sample(
+        self,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Return slave TCP pose, joints, and TCP-frame external wrench."""
+        slave_state = self.read_slave_state()
+        tcp_xyz, tcp_quat_xyzw = tdk_pose_to_saved_xyzquat(slave_state.tcp_pose)
+        joint_angles = np.asarray(slave_state.q, dtype=np.float64)
+        ext_wrench_in_tcp = np.asarray(
+            slave_state.ext_wrench_in_tcp,
+            dtype=np.float64,
+        )
+        return tcp_xyz, tcp_quat_xyzw, joint_angles, ext_wrench_in_tcp
+
     def sync_null_space_postures(self):
         """Sync null-space posture of the second robot to that of the first."""
         with self.lock:
@@ -206,8 +219,14 @@ class TeleopSlaveStateReader:
     def __init__(self, teleop_pair: CartesianTeleopPair) -> None:
         self.teleop_pair = teleop_pair
 
+    def read_slave_state(self):
+        return self.teleop_pair.read_slave_state()
+
     def read(self) -> Tuple[np.ndarray, np.ndarray]:
         return self.teleop_pair.read_slave_tcp_pose_and_joints()
 
     def read_saved_xyzquat(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         return self.teleop_pair.read_slave_saved_xyzquat_and_joints()
+
+    def read_robot_sample(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        return self.teleop_pair.read_slave_robot_sample()
