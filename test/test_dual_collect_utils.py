@@ -33,6 +33,19 @@ class FastRateControl:
         return float(self.rate_hz)
 
 
+class RecordingFastRateControl:
+    rates = []
+
+    def __init__(self, rate_hz):
+        self.rate_hz = rate_hz
+        self.count = 0
+        RecordingFastRateControl.rates.append(rate_hz)
+
+    def sleep(self):
+        self.count += 1
+        return float(self.rate_hz)
+
+
 class FakeStateReader:
     def __init__(self, stop_event):
         self.stop_event = stop_event
@@ -266,6 +279,37 @@ def test_dual_collect_keeps_gripper_enabled_by_default(monkeypatch):
     assert args.use_gripper is True
 
 
+def test_dual_collect_accepts_independent_stream_fps(monkeypatch):
+    dual_collect = import_dual_collect(monkeypatch)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "dual_collect.py",
+            "-1",
+            "master",
+            "-2",
+            "slave",
+            "--slave-gripper-id",
+            "gripper",
+            "--save-root",
+            "data",
+            "--camera-fps",
+            "15",
+            "--robot-fps",
+            "100",
+            "--force-fps",
+            "200",
+        ],
+    )
+
+    args = dual_collect.parse_args()
+
+    assert args.camera_fps == 15
+    assert args.robot_fps == 100
+    assert args.force_fps == 200
+
+
 def test_collect_teleop_data_writes_one_npy_per_robot_stream(tmp_path, monkeypatch):
     dcu = import_dual_collect_utils()
     monkeypatch.setattr(dcu, "RateControl", FastRateControl)
@@ -286,23 +330,157 @@ def test_collect_teleop_data_writes_one_npy_per_robot_stream(tmp_path, monkeypat
 
     tcps = np.load(tmp_path / "tcps.npy")
     angles = np.load(tmp_path / "angles.npy")
-    ext_wrench = np.load(tmp_path / "ext_wrench_in_tcp.npy")
     tcp_timestamps = np.load(tmp_path / "tcps_timestamps_host_s.npy")
     angle_timestamps = np.load(tmp_path / "angles_timestamps_host_s.npy")
-    wrench_timestamps = np.load(tmp_path / "ext_wrench_in_tcp_timestamps_host_s.npy")
 
     assert tcps.shape == (3, 8)
     assert angles.shape == (3, 8)
-    assert ext_wrench.shape == (3, 6)
     np.testing.assert_allclose(tcps[:, -1], 0.0)
     np.testing.assert_allclose(angles[:, -1], 0.0)
-    np.testing.assert_allclose(ext_wrench[0], [1, 11, 21, 31, 41, 51])
-    np.testing.assert_allclose(ext_wrench[2], [3, 13, 23, 33, 43, 53])
 
     assert tcp_timestamps.shape == (3,)
     np.testing.assert_allclose(angle_timestamps, tcp_timestamps)
-    np.testing.assert_allclose(wrench_timestamps, tcp_timestamps)
     assert np.all(np.diff(tcp_timestamps) >= 0.0)
 
     assert not (tmp_path / "tcps").exists()
     assert not (tmp_path / "angles").exists()
+
+
+def test_collect_camera_stream_writes_frames_and_host_timestamps(tmp_path, monkeypatch):
+    dcu = import_dual_collect_utils()
+    RecordingFastRateControl.rates = []
+    monkeypatch.setattr(dcu, "RateControl", RecordingFastRateControl)
+
+    writes = []
+    fake_cv2 = types.SimpleNamespace(
+        imwrite=lambda path, image: writes.append((path, image.shape)) or True,
+    )
+    monkeypatch.setitem(sys.modules, "cv2", fake_cv2)
+
+    stop_event = threading.Event()
+
+    class FakeCamera:
+        def __init__(self):
+            self.count = 0
+
+        def get(self):
+            self.count += 1
+            if self.count >= 3:
+                stop_event.set()
+            return (
+                np.full((2, 2, 3), self.count, dtype=np.uint8),
+                np.full((2, 2), self.count, dtype=np.uint16),
+            )
+
+    cam_dir = tmp_path / "cam_test"
+    (cam_dir / "color").mkdir(parents=True)
+    (cam_dir / "depth").mkdir(parents=True)
+
+    dcu.collect_camera_stream(
+        cameras={"cam_test": FakeCamera()},
+        session_dir=str(tmp_path),
+        stop_event=stop_event,
+        camera_fps=7,
+        status_period=0,
+    )
+
+    assert RecordingFastRateControl.rates == [7]
+    assert len(writes) == 6
+    timestamps = np.load(cam_dir / "timestamps_host_s.npy")
+    assert timestamps.shape == (3,)
+    assert np.all(np.diff(timestamps) >= 0.0)
+
+
+def test_collect_teleop_data_uses_independent_camera_robot_and_force_fps(
+    tmp_path, monkeypatch
+):
+    dcu = import_dual_collect_utils()
+    RecordingFastRateControl.rates = []
+    monkeypatch.setattr(dcu, "RateControl", RecordingFastRateControl)
+
+    fake_cv2 = types.SimpleNamespace(imwrite=lambda path, image: True)
+    monkeypatch.setitem(sys.modules, "cv2", fake_cv2)
+
+    class OneShotCamera:
+        def get(self):
+            return (
+                np.full((2, 2, 3), 1, dtype=np.uint8),
+                np.full((2, 2), 1, dtype=np.uint16),
+            )
+
+    cam_dir = tmp_path / "cam_test"
+    (cam_dir / "color").mkdir(parents=True)
+    (cam_dir / "depth").mkdir(parents=True)
+    stop_event = threading.Event()
+    state_reader = FakeStateReader(stop_event)
+
+    dcu.collect_teleop_data(
+        state_reader=state_reader,
+        slave_gripper=None,
+        cameras={"cam_test": OneShotCamera()},
+        session_dir=str(tmp_path),
+        stop_event=stop_event,
+        fps=30,
+        camera_fps=5,
+        robot_fps=20,
+        force_fps=80,
+        use_gripper=False,
+        status_period=0,
+    )
+
+    assert 5 in RecordingFastRateControl.rates
+    assert 20 in RecordingFastRateControl.rates
+    assert 80 in RecordingFastRateControl.rates
+    assert np.load(tmp_path / "tcps.npy").shape == (3, 8)
+    assert (tmp_path / "ext_wrench_in_tcp.npy").exists()
+    assert (tmp_path / "ext_wrench_in_tcp_timestamps_host_s.npy").exists()
+    assert (cam_dir / "timestamps_host_s.npy").exists()
+
+
+def test_robot_and_force_streams_can_have_different_lengths(tmp_path, monkeypatch):
+    dcu = import_dual_collect_utils()
+    monkeypatch.setattr(dcu, "RateControl", FastRateControl)
+
+    robot_stop_event = threading.Event()
+    robot_reader = FakeStateReader(robot_stop_event)
+
+    dcu.collect_robot_stream(
+        state_reader=robot_reader,
+        slave_gripper=None,
+        session_dir=str(tmp_path),
+        stop_event=robot_stop_event,
+        robot_fps=20,
+        use_gripper=False,
+        status_period=0,
+    )
+
+    force_stop_event = threading.Event()
+
+    class ForceStateReader:
+        def __init__(self):
+            self.count = 0
+
+        def read_robot_sample(self):
+            self.count += 1
+            idx = float(self.count)
+            if self.count >= 5:
+                force_stop_event.set()
+            return (
+                np.zeros(3),
+                np.array([0.0, 0.0, 0.0, 1.0]),
+                np.zeros(7),
+                np.array([idx, idx + 1, idx + 2, idx + 3, idx + 4, idx + 5]),
+            )
+
+    dcu.collect_force_stream(
+        state_reader=ForceStateReader(),
+        session_dir=str(tmp_path),
+        stop_event=force_stop_event,
+        force_fps=80,
+        status_period=0,
+    )
+
+    assert np.load(tmp_path / "tcps.npy").shape == (3, 8)
+    assert np.load(tmp_path / "angles.npy").shape == (3, 8)
+    assert np.load(tmp_path / "ext_wrench_in_tcp.npy").shape == (5, 6)
+    assert np.load(tmp_path / "ext_wrench_in_tcp_timestamps_host_s.npy").shape == (5,)

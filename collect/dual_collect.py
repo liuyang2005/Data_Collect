@@ -43,6 +43,24 @@ def parse_args():
     parser.add_argument("--session-name", default=None, help="Optional session directory name")
     parser.add_argument("--fps", type=int, default=DEFAULT_FPS, help="Collection FPS")
     parser.add_argument(
+        "--camera-fps",
+        type=int,
+        default=None,
+        help="Camera collection FPS. Defaults to --fps when omitted.",
+    )
+    parser.add_argument(
+        "--robot-fps",
+        type=int,
+        default=None,
+        help="TCP, joint, and gripper collection FPS. Defaults to --fps when omitted.",
+    )
+    parser.add_argument(
+        "--force-fps",
+        type=int,
+        default=None,
+        help="Force/wrench collection FPS. Defaults to --robot-fps, then --fps.",
+    )
+    parser.add_argument(
         "--use-gripper",
         type=parse_bool,
         default=True,
@@ -67,6 +85,14 @@ def parse_args():
     parser.add_argument("--slave-open-width", type=float, default=0.085, help="Slave gripper open width in meters")
     parser.add_argument("--slave-close-width", type=float, default=0.0, help="Slave gripper closed width in meters")
     args = parser.parse_args()
+    if args.fps <= 0:
+        parser.error("--fps must be positive")
+    if args.camera_fps is not None and args.camera_fps <= 0:
+        parser.error("--camera-fps must be positive")
+    if args.robot_fps is not None and args.robot_fps <= 0:
+        parser.error("--robot-fps must be positive")
+    if args.force_fps is not None and args.force_fps <= 0:
+        parser.error("--force-fps must be positive")
     if args.use_gripper and not args.slave_gripper_id:
         parser.error("--use-gripper true requires --slave-gripper-id")
     if args.use_gripper and args.angler_open_angle == args.angler_close_angle:
@@ -92,6 +118,10 @@ def build_metadata(args, camera_serials, tdk_tcp_pose_order, saved_tcp_pose_orde
         {
             "camera_serials": camera_serials,
             "recorded_robot": "second",
+            "collection_mode": "multi_rate_threads",
+            "effective_camera_fps": args.camera_fps or args.fps,
+            "effective_robot_fps": args.robot_fps or args.fps,
+            "effective_force_fps": args.force_fps or args.robot_fps or args.fps,
             "tcp_pose_source": "CartesianTeleopLAN.robot_states()[1].tcp_pose",
             "ext_wrench_in_tcp_source": (
                 "CartesianTeleopLAN.robot_states()[1].ext_wrench_in_tcp"
@@ -101,8 +131,16 @@ def build_metadata(args, camera_serials, tdk_tcp_pose_order, saved_tcp_pose_orde
             "robot_stream_files": {
                 "tcps": "tcps.npy",
                 "angles": "angles.npy",
+                "timestamps": "tcps_timestamps_host_s.npy, angles_timestamps_host_s.npy",
+            },
+            "force_stream_files": {
                 "ext_wrench_in_tcp": "ext_wrench_in_tcp.npy",
-                "timestamps": "*_timestamps_host_s.npy",
+                "timestamps": "ext_wrench_in_tcp_timestamps_host_s.npy",
+            },
+            "camera_stream_files": {
+                "color": "cam_*/color/*.png",
+                "depth": "cam_*/depth/*.png",
+                "timestamps": "cam_*/timestamps_host_s.npy",
             },
             "master_gripper_width_source": (
                 "disabled"
@@ -161,15 +199,18 @@ def start_recording(
     stop_event = threading.Event()
     collect_thread = threading.Thread(
         target=collect_teleop_data,
-        args=(
-            state_reader,
-            slave_gripper,
-            cameras,
-            session_dir,
-            stop_event,
-            args.fps,
-            args.use_gripper,
-        ),
+        kwargs={
+            "state_reader": state_reader,
+            "slave_gripper": slave_gripper,
+            "cameras": cameras,
+            "session_dir": session_dir,
+            "stop_event": stop_event,
+            "fps": args.fps,
+            "use_gripper": args.use_gripper,
+            "camera_fps": args.camera_fps,
+            "robot_fps": args.robot_fps,
+            "force_fps": args.force_fps,
+        },
         daemon=True,
     )
     collect_thread.start()
@@ -296,7 +337,7 @@ def main() -> None:
                     close_width=args.slave_close_width,
                 )
 
-            cameras = init_cameras(D415_CAMERAS, args.fps)
+            cameras = init_cameras(D415_CAMERAS, args.camera_fps or args.fps)
             state_reader = TeleopSlaveStateReader(teleop_pair)
 
             run_keyboard_loop(

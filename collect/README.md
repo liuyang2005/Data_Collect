@@ -52,12 +52,21 @@ python collect/dual_collect.py \
 
 ```bash
 --fps 30
+--camera-fps 30
+--robot-fps 100
+--force-fps 200
 --session-name record_test
 --network-interface 192.168.2.102
 --gripper-eps 0.0001
 --gripper-wait-time 0.1
 --null-space-period 0.1
 ```
+
+`--fps` 是兼容旧脚本的默认频率；如果没有显式传入 `--camera-fps` 或 `--robot-fps`，对应数据流会回退使用 `--fps`；如果没有显式传入 `--force-fps`，力数据会回退使用 `--robot-fps`，再回退到 `--fps`。当前多频版本中：
+
+- `--camera-fps`：RGBD 相机采集线程频率。
+- `--robot-fps`：从臂 TCP、关节角和夹爪宽度采集线程频率。
+- `--force-fps`：从臂外力估计 `ext_wrench_in_tcp` 采集线程频率。
 
 `--network-interface` 可以重复传入多个 LAN 网卡 IPv4 地址。
 
@@ -79,7 +88,7 @@ python collect/dual_collect.py \
 s 暂停遥操作 -> q 退出程序
 ```
 
-每次按 `c` 都会创建一个新的轨迹目录，记录相机、从臂 TCP、从臂关节角和从端夹爪宽度。
+每次按 `c` 都会创建一个新的轨迹目录。当前版本会启动独立采集线程：相机按 `--camera-fps` 保存 RGBD，机器人状态按 `--robot-fps` 保存从臂 TCP、从臂关节角和从端夹爪宽度，力数据按 `--force-fps` 保存外力估计。
 
 ## 数据结构
 
@@ -90,6 +99,7 @@ record_YYYYmmdd_HHMMSS/
   cam_327322062498/
     color/
     depth/
+    timestamps_host_s.npy
   tcps.npy
   tcps_timestamps_host_s.npy
   angles.npy
@@ -101,12 +111,16 @@ record_YYYYmmdd_HHMMSS/
 
 保存格式：
 
+- `cam_*/color/*.png`：RGB 图像，文件名为相机线程内连续帧号。
+- `cam_*/depth/*.png`：depth 图像，文件名与同一相机线程内 color 帧号一致。
+- `cam_*/timestamps_host_s.npy`：`(T_camera,)`，相机帧保存时的主机时间戳，单位秒。
 - `tcps.npy`：`(T, 8)`，每行 `[x, y, z, qx, qy, qz, qw, gripper_width]`
 - `angles.npy`：`(T, 8)`，每行 `[q1, q2, q3, q4, q5, q6, q7, gripper_width]`
 - `ext_wrench_in_tcp.npy`：`(T, 6)`，每行来自从臂 `RobotStates.ext_wrench_in_tcp`
-- `*_timestamps_host_s.npy`：`(T,)`，对应数据采样时的主机时间戳，单位秒
+- `tcps_timestamps_host_s.npy` / `angles_timestamps_host_s.npy`：`(T_robot,)`，机器人状态采样时的主机时间戳，单位秒
+- `ext_wrench_in_tcp_timestamps_host_s.npy`：`(T_force,)`，力数据采样时的主机时间戳，单位秒
 
-其中 TCP 数据记录的是从臂状态。
+其中 TCP 数据记录的是从臂状态。多频版本中，`T_camera`、`T_robot` 和 `T_force` 通常不同，不能再假设图片帧号、`tcps.npy` 行号与 `ext_wrench_in_tcp.npy` 行号一一对应；后续 ACP 或 LeRobot 转换脚本应按 `timestamps_host_s.npy` 做最近邻、插值或窗口聚合对齐。
 
 ## 主端 Angler 编码器控制夹爪
 

@@ -1,5 +1,6 @@
 import json
 import os
+import threading
 import time
 from argparse import Namespace
 from datetime import datetime
@@ -216,9 +217,10 @@ def save_camera_frames(
     cameras: Mapping[str, Any],
     session_dir: str,
     frame_idx: int,
-) -> None:
+) -> list[str]:
     import cv2
 
+    saved_cameras = []
     for name, cam in cameras.items():
         color_frame, depth_frame = cam.get()
 
@@ -231,6 +233,47 @@ def save_camera_frames(
                 os.path.join(session_dir, name, "depth", f"{frame_idx:016d}.png"),
                 depth_frame,
             )
+            saved_cameras.append(name)
+    return saved_cameras
+
+
+def save_camera_timestamps(
+    session_dir: str,
+    camera_timestamps: Mapping[str, Sequence[float]],
+) -> None:
+    for camera_name, timestamps in camera_timestamps.items():
+        np.save(
+            os.path.join(session_dir, camera_name, "timestamps_host_s.npy"),
+            np.asarray(timestamps, dtype=np.float64),
+        )
+
+
+def collect_camera_stream(
+    cameras: Mapping[str, Any],
+    session_dir: str,
+    stop_event,
+    camera_fps: int,
+    status_period: int = 100,
+) -> None:
+    rate_control = RateControl(camera_fps)
+    frame_idx = 0
+    camera_timestamps = {name: [] for name in cameras}
+
+    while not stop_event.is_set():
+        actual_rate = rate_control.sleep()
+        sample_time = time.time()
+        saved_cameras = save_camera_frames(cameras, session_dir, frame_idx)
+        for camera_name in saved_cameras:
+            camera_timestamps[camera_name].append(sample_time)
+
+        if status_period and frame_idx % status_period == 0:
+            print(
+                f"Camera rate: {actual_rate:.2f} Hz, collected frames: {frame_idx}"
+            )
+
+        frame_idx += 1
+
+    save_camera_timestamps(session_dir, camera_timestamps)
 
 
 def tdk_pose_to_saved_xyzquat(tdk_pose: Sequence[float]) -> Tuple[np.ndarray, np.ndarray]:
@@ -284,34 +327,130 @@ def read_robot_sample(state_reader) -> Tuple[np.ndarray, np.ndarray, np.ndarray,
     )
 
 
+def _read_robot_sample_locked(state_reader, state_reader_lock=None):
+    if state_reader_lock is None:
+        return read_robot_sample(state_reader)
+    with state_reader_lock:
+        return read_robot_sample(state_reader)
+
+
 def save_robot_streams(
     session_dir: str,
     tcp_rows: Sequence[np.ndarray],
     joint_rows: Sequence[np.ndarray],
-    ext_wrench_rows: Sequence[np.ndarray],
     timestamps_host_s: Sequence[float],
 ) -> None:
     timestamps = np.asarray(timestamps_host_s, dtype=np.float64)
     tcps = np.asarray(tcp_rows, dtype=np.float64)
     angles = np.asarray(joint_rows, dtype=np.float64)
-    ext_wrench = np.asarray(ext_wrench_rows, dtype=np.float64)
 
     if tcps.size == 0:
         tcps = np.empty((0, 8), dtype=np.float64)
     if angles.size == 0:
         angles = np.empty((0, 8), dtype=np.float64)
-    if ext_wrench.size == 0:
-        ext_wrench = np.empty((0, 6), dtype=np.float64)
 
     np.save(os.path.join(session_dir, "tcps.npy"), tcps)
     np.save(os.path.join(session_dir, "angles.npy"), angles)
-    np.save(os.path.join(session_dir, "ext_wrench_in_tcp.npy"), ext_wrench)
-
     np.save(os.path.join(session_dir, "tcps_timestamps_host_s.npy"), timestamps)
     np.save(os.path.join(session_dir, "angles_timestamps_host_s.npy"), timestamps)
+
+
+def save_force_stream(
+    session_dir: str,
+    ext_wrench_rows: Sequence[np.ndarray],
+    timestamps_host_s: Sequence[float],
+) -> None:
+    timestamps = np.asarray(timestamps_host_s, dtype=np.float64)
+    ext_wrench = np.asarray(ext_wrench_rows, dtype=np.float64)
+
+    if ext_wrench.size == 0:
+        ext_wrench = np.empty((0, 6), dtype=np.float64)
+
+    np.save(os.path.join(session_dir, "ext_wrench_in_tcp.npy"), ext_wrench)
     np.save(
         os.path.join(session_dir, "ext_wrench_in_tcp_timestamps_host_s.npy"),
         timestamps,
+    )
+
+
+def collect_robot_stream(
+    state_reader,
+    slave_gripper,
+    session_dir: str,
+    stop_event,
+    robot_fps: int,
+    use_gripper: bool = True,
+    status_period: int = 100,
+    state_reader_lock: Optional[threading.Lock] = None,
+) -> None:
+    rate_control = RateControl(robot_fps)
+    frame_idx = 0
+    tcp_rows = []
+    joint_rows = []
+    timestamps_host_s = []
+
+    while not stop_event.is_set():
+        actual_rate = rate_control.sleep()
+        sample_time = time.time()
+
+        tcp_xyz, tcp_quat_xyzw, slave_joint_angles, _ = _read_robot_sample_locked(
+            state_reader,
+            state_reader_lock,
+        )
+        slave_gripper_width = slave_gripper.read() if use_gripper else 0.0
+
+        pose_data = np.concatenate([tcp_xyz, tcp_quat_xyzw, [slave_gripper_width]])
+        joint_data = np.concatenate([slave_joint_angles, [slave_gripper_width]])
+        tcp_rows.append(pose_data)
+        joint_rows.append(joint_data)
+        timestamps_host_s.append(sample_time)
+
+        if status_period and frame_idx % status_period == 0:
+            print(f"Robot rate: {actual_rate:.2f} Hz, collected frames: {frame_idx}")
+
+        frame_idx += 1
+
+    save_robot_streams(
+        session_dir=session_dir,
+        tcp_rows=tcp_rows,
+        joint_rows=joint_rows,
+        timestamps_host_s=timestamps_host_s,
+    )
+
+
+def collect_force_stream(
+    state_reader,
+    session_dir: str,
+    stop_event,
+    force_fps: int,
+    status_period: int = 100,
+    state_reader_lock: Optional[threading.Lock] = None,
+) -> None:
+    rate_control = RateControl(force_fps)
+    frame_idx = 0
+    ext_wrench_rows = []
+    timestamps_host_s = []
+
+    while not stop_event.is_set():
+        actual_rate = rate_control.sleep()
+        sample_time = time.time()
+
+        _, _, _, ext_wrench_in_tcp = _read_robot_sample_locked(
+            state_reader,
+            state_reader_lock,
+        )
+        ext_wrench_rows.append(ext_wrench_in_tcp)
+        timestamps_host_s.append(sample_time)
+
+        if status_period and frame_idx % status_period == 0:
+            print(f"Force rate: {actual_rate:.2f} Hz, collected frames: {frame_idx}")
+
+        frame_idx += 1
+
+    save_force_stream(
+        session_dir=session_dir,
+        ext_wrench_rows=ext_wrench_rows,
+        timestamps_host_s=timestamps_host_s,
     )
 
 
@@ -324,48 +463,83 @@ def collect_teleop_data(
     fps: int = FPS,
     use_gripper: bool = True,
     status_period: int = 100,
+    camera_fps: Optional[int] = None,
+    robot_fps: Optional[int] = None,
+    force_fps: Optional[int] = None,
 ) -> None:
-    rate_control = RateControl(fps)
-    frame_idx = 0
-    tcp_rows = []
-    joint_rows = []
-    ext_wrench_rows = []
-    timestamps_host_s = []
+    effective_camera_fps = camera_fps if camera_fps is not None else fps
+    effective_robot_fps = robot_fps if robot_fps is not None else fps
+    effective_force_fps = force_fps if force_fps is not None else effective_robot_fps
+    state_reader_lock = threading.Lock()
+    errors = []
+
+    def run_worker(worker, *args, **kwargs):
+        try:
+            worker(*args, **kwargs)
+        except BaseException as exc:
+            errors.append(exc)
+            stop_event.set()
 
     print("Start data collection...")
 
-    while not stop_event.is_set():
-        actual_rate = rate_control.sleep()
-        sample_time = time.time()
-
-        # camera data collection
-        save_camera_frames(cameras, session_dir, frame_idx)
-
-        # TCP pose, joint angle, ext wrench, and gripper data collection
-        tcp_xyz, tcp_quat_xyzw, slave_joint_angles, ext_wrench_in_tcp = (
-            read_robot_sample(state_reader)
+    threads = []
+    if cameras:
+        threads.append(
+            threading.Thread(
+                target=run_worker,
+                args=(
+                    collect_camera_stream,
+                    cameras,
+                    session_dir,
+                    stop_event,
+                    effective_camera_fps,
+                    status_period,
+                ),
+                daemon=True,
+            )
         )
-        slave_gripper_width = slave_gripper.read() if use_gripper else 0.0
 
-        pose_data = np.concatenate([tcp_xyz, tcp_quat_xyzw, [slave_gripper_width]])
-        joint_data = np.concatenate([slave_joint_angles, [slave_gripper_width]])
-        tcp_rows.append(pose_data)
-        joint_rows.append(joint_data)
-        ext_wrench_rows.append(ext_wrench_in_tcp)
-        timestamps_host_s.append(sample_time)
-
-        if status_period and frame_idx % status_period == 0:
-            print(f"Actual rate: {actual_rate:.2f} Hz, collected frames: {frame_idx}")
-
-        frame_idx += 1
-
-    save_robot_streams(
-        session_dir=session_dir,
-        tcp_rows=tcp_rows,
-        joint_rows=joint_rows,
-        ext_wrench_rows=ext_wrench_rows,
-        timestamps_host_s=timestamps_host_s,
+    threads.append(
+        threading.Thread(
+            target=run_worker,
+            args=(
+                collect_robot_stream,
+                state_reader,
+                slave_gripper,
+                session_dir,
+                stop_event,
+                effective_robot_fps,
+                use_gripper,
+                status_period,
+                state_reader_lock,
+            ),
+            daemon=True,
+        )
     )
+    threads.append(
+        threading.Thread(
+            target=run_worker,
+            args=(
+                collect_force_stream,
+                state_reader,
+                session_dir,
+                stop_event,
+                effective_force_fps,
+                status_period,
+                state_reader_lock,
+            ),
+            daemon=True,
+        )
+    )
+
+    for thread in threads:
+        thread.start()
+
+    for thread in threads:
+        thread.join()
+
+    if errors:
+        raise errors[0]
 
 
 class RateControl:

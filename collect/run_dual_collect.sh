@@ -20,6 +20,9 @@ SECOND_SN="Rizon4s-063586"
 SAVE_ROOT="/home/xense/flexiv_rizon4s_workspace/Data/pick_0629"
 SESSION_NAME=""
 FPS="30"
+CAMERA_FPS="30"
+ROBOT_FPS="100"
+FORCE_FPS="200"
 
 # Gripper collection: true or false.
 # Master side uses Angler encoder, slave side uses Xense.
@@ -55,6 +58,9 @@ set -- \
   -2 "$SECOND_SN" \
   --save-root "$SAVE_ROOT" \
   --fps "$FPS" \
+  --camera-fps "$CAMERA_FPS" \
+  --robot-fps "$ROBOT_FPS" \
+  --force-fps "$FORCE_FPS" \
   --use-gripper "$USE_GRIPPER" \
   --gripper-eps "$GRIPPER_EPS" \
   --gripper-wait-time "$GRIPPER_WAIT_TIME" \
