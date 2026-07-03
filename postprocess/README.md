@@ -1,3 +1,58 @@
+# 后处理使用说明
+
+## ACP raw 数据适配
+
+`convert_acp_raw.py` 将当前 `Data_Collect` 采集目录转换成 ACP 原仓库
+`PyriteUtility/data_pipeline/real_data_processing.py` 期望的 raw 输入格式。
+这个脚本不写 zarr，只做输入适配；后续 raw -> zarr 和
+`ts_pose_virtual_target_0` / `stiffness_0` 生成继续复用 ACP 原有脚本。
+
+输入目录可以是单条 session，也可以是包含多条 session 的根目录：
+
+先改 `run_convert_acp_raw.sh` 顶部的 `SESSIONS`、`OUTPUT_RAW_DATASET`、
+`CAMERA_NAME`，然后运行：
+
+```bash
+sh postprocess/run_convert_acp_raw.sh
+```
+
+也可以直接命令行运行：
+
+```bash
+python postprocess/convert_acp_raw.py \
+  /path/to/record_20260701_173539_486807 \
+  -o /path/to/acp_raw_dataset \
+  --camera-name cam_327322062498 \
+  --force
+```
+
+输出结构：
+
+```text
+acp_raw_dataset/
+  episode_000000/
+    rgb_0/
+      img_000000_00000.00000_ms.png
+      ...
+    robot_data_0.json
+    wrench_data_0.json
+    conversion_metadata.json
+```
+
+转换规则：
+
+- `cam_*/color/*.png` -> `rgb_0/img_count_timestamp_ms.png`
+- `tcps.npy` -> `robot_data_0.json: ts_pose_fb`
+- `ts_pose_command` 复制 `ts_pose_fb`，这与 ACP 公开的 `real_data_processing.py` 行为一致
+- `ext_wrench_in_tcp.npy` -> `wrench_data_0.json: wrench`
+- `*_timestamps_host_s.npy` 是 Unix epoch 秒，输出前统一转换成相对毫秒
+- `tcps.npy` 中的四元数从 `[qx, qy, qz, qw]` 转成 ACP 的 `[qw, qx, qy, qz]`
+- 新格式如果存在 `cam_*/timestamps_host_s.npy`，使用真实相机时间戳
+- 旧格式如果没有相机时间戳且相机帧数等于 robot 帧数，使用 robot 时间戳按索引兜底
+
+生成 `acp_raw_dataset` 后，把它作为 ACP `real_data_processing.py` 的
+`PYRITE_RAW_DATASET_FOLDERS` 下的数据集输入。
+
 # MaskACT-3D HDF5 后处理使用说明
 
 ## 文件说明
