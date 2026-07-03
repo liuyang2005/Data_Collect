@@ -391,6 +391,67 @@ def test_collect_camera_stream_writes_frames_and_host_timestamps(tmp_path, monke
     assert np.all(np.diff(timestamps) >= 0.0)
 
 
+def test_camera_collection_continues_when_image_writes_are_blocked(
+    tmp_path, monkeypatch
+):
+    dcu = import_dual_collect_utils()
+    monkeypatch.setattr(dcu, "RateControl", FastRateControl)
+
+    first_write_started = threading.Event()
+    release_writes = threading.Event()
+    writes = []
+
+    def blocking_imwrite(path, image):
+        first_write_started.set()
+        release_writes.wait(timeout=1.0)
+        writes.append((path, image.shape))
+        return True
+
+    fake_cv2 = types.SimpleNamespace(imwrite=blocking_imwrite)
+    monkeypatch.setitem(sys.modules, "cv2", fake_cv2)
+
+    stop_event = threading.Event()
+
+    class FakeCamera:
+        def __init__(self):
+            self.count = 0
+
+        def get(self):
+            self.count += 1
+            if self.count >= 3:
+                stop_event.set()
+            return (
+                np.full((2, 2, 3), self.count, dtype=np.uint8),
+                np.full((2, 2), self.count, dtype=np.uint16),
+            )
+
+    camera = FakeCamera()
+    cam_dir = tmp_path / "cam_test"
+    (cam_dir / "color").mkdir(parents=True)
+    (cam_dir / "depth").mkdir(parents=True)
+
+    thread = threading.Thread(
+        target=dcu.collect_camera_stream,
+        kwargs={
+            "cameras": {"cam_test": camera},
+            "session_dir": str(tmp_path),
+            "stop_event": stop_event,
+            "camera_fps": 30,
+            "status_period": 0,
+        },
+    )
+    thread.start()
+
+    assert first_write_started.wait(timeout=1.0)
+    assert camera.count >= 3
+
+    release_writes.set()
+    thread.join(timeout=1.0)
+
+    assert not thread.is_alive()
+    assert len(writes) == 6
+
+
 def test_collect_teleop_data_uses_independent_camera_robot_and_force_fps(
     tmp_path, monkeypatch
 ):

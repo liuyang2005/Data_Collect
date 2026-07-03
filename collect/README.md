@@ -88,7 +88,7 @@ python collect/dual_collect.py \
 s 暂停遥操作 -> q 退出程序
 ```
 
-每次按 `c` 都会创建一个新的轨迹目录。当前版本会启动独立采集线程：相机按 `--camera-fps` 保存 RGBD，机器人状态按 `--robot-fps` 保存从臂 TCP、从臂关节角和从端夹爪宽度，力数据按 `--force-fps` 保存外力估计。
+每次按 `c` 都会创建一个新的轨迹目录。当前版本会启动独立采集线程：相机按 `--camera-fps` 采集 RGBD，机器人状态按 `--robot-fps` 保存从臂 TCP、从臂关节角和从端夹爪宽度，力数据按 `--force-fps` 保存外力估计。相机线程只负责取帧并放入队列，PNG 写盘由单独 writer 线程异步完成，避免 `cv2.imwrite()` 直接拖慢取帧。
 
 ## 数据结构
 

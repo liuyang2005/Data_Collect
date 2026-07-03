@@ -1,5 +1,6 @@
 import json
 import os
+import queue
 import threading
 import time
 from argparse import Namespace
@@ -213,18 +214,38 @@ def init_angler_controller(
     )
 
 
-def save_camera_frames(
+def enqueue_camera_frames(
     cameras: Mapping[str, Any],
-    session_dir: str,
+    frame_queue,
     frame_idx: int,
 ) -> list[str]:
-    import cv2
-
-    saved_cameras = []
+    queued_cameras = []
     for name, cam in cameras.items():
         color_frame, depth_frame = cam.get()
 
         if color_frame is not None and depth_frame is not None:
+            frame_queue.put(
+                (
+                    name,
+                    frame_idx,
+                    np.asarray(color_frame).copy(),
+                    np.asarray(depth_frame).copy(),
+                )
+            )
+            queued_cameras.append(name)
+    return queued_cameras
+
+
+def write_camera_frames(session_dir: str, frame_queue, sentinel, errors, stop_event) -> None:
+    import cv2
+
+    while True:
+        item = frame_queue.get()
+        try:
+            if item is sentinel:
+                return
+
+            name, frame_idx, color_frame, depth_frame = item
             cv2.imwrite(
                 os.path.join(session_dir, name, "color", f"{frame_idx:016d}.png"),
                 color_frame,
@@ -233,8 +254,11 @@ def save_camera_frames(
                 os.path.join(session_dir, name, "depth", f"{frame_idx:016d}.png"),
                 depth_frame,
             )
-            saved_cameras.append(name)
-    return saved_cameras
+        except BaseException as exc:
+            errors.append(exc)
+            stop_event.set()
+        finally:
+            frame_queue.task_done()
 
 
 def save_camera_timestamps(
@@ -258,22 +282,37 @@ def collect_camera_stream(
     rate_control = RateControl(camera_fps)
     frame_idx = 0
     camera_timestamps = {name: [] for name in cameras}
+    frame_queue = queue.Queue()
+    writer_errors = []
+    sentinel = object()
+    writer_thread = threading.Thread(
+        target=write_camera_frames,
+        args=(session_dir, frame_queue, sentinel, writer_errors, stop_event),
+        daemon=True,
+    )
+    writer_thread.start()
 
-    while not stop_event.is_set():
-        actual_rate = rate_control.sleep()
-        sample_time = time.time()
-        saved_cameras = save_camera_frames(cameras, session_dir, frame_idx)
-        for camera_name in saved_cameras:
-            camera_timestamps[camera_name].append(sample_time)
+    try:
+        while not stop_event.is_set():
+            actual_rate = rate_control.sleep()
+            sample_time = time.time()
+            queued_cameras = enqueue_camera_frames(cameras, frame_queue, frame_idx)
+            for camera_name in queued_cameras:
+                camera_timestamps[camera_name].append(sample_time)
 
-        if status_period and frame_idx % status_period == 0:
-            print(
-                f"Camera rate: {actual_rate:.2f} Hz, collected frames: {frame_idx}"
-            )
+            if status_period and frame_idx % status_period == 0:
+                print(
+                    f"Camera rate: {actual_rate:.2f} Hz, collected frames: {frame_idx}"
+                )
 
-        frame_idx += 1
+            frame_idx += 1
+    finally:
+        frame_queue.put(sentinel)
+        writer_thread.join()
 
     save_camera_timestamps(session_dir, camera_timestamps)
+    if writer_errors:
+        raise writer_errors[0]
 
 
 def tdk_pose_to_saved_xyzquat(tdk_pose: Sequence[float]) -> Tuple[np.ndarray, np.ndarray]:
