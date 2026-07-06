@@ -7,6 +7,59 @@
 这个脚本不写 zarr，只做输入适配；后续 raw -> zarr 和
 `ts_pose_virtual_target_0` / `stiffness_0` 生成继续复用 ACP 原有脚本。
 
+### 一键 ACP 后处理脚本
+
+推荐采完数据后直接改并运行：
+
+```bash
+sh postprocess/run_acp_pipeline.sh
+```
+
+每次主要修改 `run_acp_pipeline.sh` 顶部这些变量：
+
+```bash
+SESSIONS="/path/to/save_root_or_one_session"
+CAMERA_NAME="cam_327322062498"
+DATASET_NAME="your_dataset_name"
+RAW_DATASET_PARENT="/path/to/acp_raw_parent"
+PROCESSED_DATASET_PARENT="/path/to/acp_zarr_parent"
+ACP_ROOT="../adaptive_compliance_policy"
+WRENCH_MOVING_AVERAGE_WINDOW_SIZE="200"
+RUN_TRAIN="false"
+```
+
+含义：
+
+- `SESSIONS`：你的采集数据目录。可以是一条 `record_xxx`，也可以是包含多条 `record_xxx` 的根目录。
+- `CAMERA_NAME`：要导出的相机目录名；多相机时必须指定。
+- `DATASET_NAME`：ACP 数据集名字。raw 和 zarr 都会使用这个名字。
+- `RAW_DATASET_PARENT`：ACP raw 数据的父目录，脚本会生成 `$RAW_DATASET_PARENT/$DATASET_NAME/episode_xxxxxx`。
+- `PROCESSED_DATASET_PARENT`：ACP zarr 输出父目录，脚本会生成 `$PROCESSED_DATASET_PARENT/$DATASET_NAME`。
+- `ACP_ROOT`：`adaptive_compliance_policy` 仓库位置。
+- `WRENCH_MOVING_AVERAGE_WINDOW_SIZE`：约等于 1 秒力数据。比如 `--force-fps 200` 就先填 `200`。
+- `RUN_TRAIN`：默认 `false`，先只生成训练数据；确认 zarr 没问题后再改成 `true` 开始训练。
+
+这个脚本不会直接修改 ACP 源文件。它会根据 `DATASET_NAME` 和窗口参数生成临时版
+`real_data_processing.py` / `postprocess_add_virtual_target_label.py` 再运行，避免每次手动改
+ACP 里的 `flip_up_new_v5`。
+
+### ACP checkpoint 离线检查
+
+训练完成后，可以先不上机器人，用处理好的 zarr 数据检查 checkpoint 能否正常加载和预测：
+
+```bash
+python postprocess/eval_acp_checkpoint.py \
+  --ckpt /path/to/acp_checkpoints/2026.xx.xx_xx.xx.xx_flip_up_conv_230 \
+  --dataset /path/to/acp_processed/your_dataset_name \
+  --device cuda \
+  --num-samples 16 \
+  --batch-size 4
+```
+
+`--ckpt` 可以传训练 run 目录，也可以直接传某个 `.ckpt` 文件。传 run 目录时，脚本会自动使用
+`checkpoints/latest.ckpt`。输出会包含预测 action 和数据集中 GT action 的 MSE，按
+`reference_pose9`、`virtual_target_pose9`、`stiffness` 分开统计。
+
 输入目录可以是单条 session，也可以是包含多条 session 的根目录：
 
 先改 `run_convert_acp_raw.sh` 顶部的 `SESSIONS`、`OUTPUT_RAW_DATASET`、
