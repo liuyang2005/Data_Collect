@@ -452,6 +452,157 @@ def test_camera_collection_continues_when_image_writes_are_blocked(
     assert len(writes) == 6
 
 
+def test_camera_timestamp_is_recorded_after_frame_read(tmp_path, monkeypatch):
+    dcu = import_dual_collect_utils()
+    monkeypatch.setattr(dcu, "RateControl", FastRateControl)
+
+    clock = {"value": 10.0}
+    monkeypatch.setattr(dcu.time, "time", lambda: clock["value"])
+    monkeypatch.setitem(
+        sys.modules,
+        "cv2",
+        types.SimpleNamespace(imwrite=lambda path, image: True),
+    )
+
+    stop_event = threading.Event()
+
+    class TimestampCamera:
+        def get(self):
+            clock["value"] = 20.0
+            stop_event.set()
+            return (
+                np.zeros((2, 2, 3), dtype=np.uint8),
+                np.zeros((2, 2), dtype=np.uint16),
+            )
+
+    cam_dir = tmp_path / "cam_test"
+    (cam_dir / "color").mkdir(parents=True)
+    (cam_dir / "depth").mkdir(parents=True)
+
+    dcu.collect_camera_stream(
+        cameras={"cam_test": TimestampCamera()},
+        session_dir=str(tmp_path),
+        stop_event=stop_event,
+        camera_fps=30,
+        status_period=0,
+    )
+
+    timestamps = np.load(cam_dir / "timestamps_host_s.npy")
+    np.testing.assert_allclose(timestamps, [20.0])
+
+
+def test_robot_timestamp_is_recorded_after_state_read(tmp_path, monkeypatch):
+    dcu = import_dual_collect_utils()
+    monkeypatch.setattr(dcu, "RateControl", FastRateControl)
+
+    clock = {"value": 10.0}
+    monkeypatch.setattr(dcu.time, "time", lambda: clock["value"])
+    stop_event = threading.Event()
+
+    class TimestampStateReader:
+        def read_robot_sample(self):
+            clock["value"] = 20.0
+            stop_event.set()
+            return (
+                np.zeros(3),
+                np.array([0.0, 0.0, 0.0, 1.0]),
+                np.zeros(7),
+                np.zeros(6),
+            )
+
+    dcu.collect_robot_stream(
+        state_reader=TimestampStateReader(),
+        slave_gripper=None,
+        session_dir=str(tmp_path),
+        stop_event=stop_event,
+        robot_fps=100,
+        use_gripper=False,
+        status_period=0,
+    )
+
+    timestamps = np.load(tmp_path / "tcps_timestamps_host_s.npy")
+    np.testing.assert_allclose(timestamps, [20.0])
+
+
+def test_force_timestamp_is_recorded_after_state_read(tmp_path, monkeypatch):
+    dcu = import_dual_collect_utils()
+    monkeypatch.setattr(dcu, "RateControl", FastRateControl)
+
+    clock = {"value": 10.0}
+    monkeypatch.setattr(dcu.time, "time", lambda: clock["value"])
+    stop_event = threading.Event()
+
+    class TimestampStateReader:
+        def read_robot_sample(self):
+            clock["value"] = 20.0
+            stop_event.set()
+            return (
+                np.zeros(3),
+                np.array([0.0, 0.0, 0.0, 1.0]),
+                np.zeros(7),
+                np.zeros(6),
+            )
+
+    dcu.collect_force_stream(
+        state_reader=TimestampStateReader(),
+        session_dir=str(tmp_path),
+        stop_event=stop_event,
+        force_fps=200,
+        status_period=0,
+    )
+
+    timestamps = np.load(tmp_path / "ext_wrench_in_tcp_timestamps_host_s.npy")
+    np.testing.assert_allclose(timestamps, [20.0])
+
+
+def test_stop_collection_waits_for_completion_and_reports_final_counts(
+    tmp_path, monkeypatch, caplog
+):
+    dual_collect = import_dual_collect(monkeypatch)
+
+    cam_dir = tmp_path / "cam_test"
+    (cam_dir / "color").mkdir(parents=True)
+    (cam_dir / "depth").mkdir(parents=True)
+    for idx in range(2):
+        (cam_dir / "color" / f"{idx:016d}.png").touch()
+        (cam_dir / "depth" / f"{idx:016d}.png").touch()
+
+    np.save(tmp_path / "tcps.npy", np.zeros((3, 8)))
+    np.save(tmp_path / "angles.npy", np.zeros((3, 8)))
+    np.save(tmp_path / "ext_wrench_in_tcp.npy", np.zeros((4, 6)))
+
+    class RecordingThread:
+        def __init__(self):
+            self.join_timeout = "not-called"
+
+        def join(self, timeout=None):
+            self.join_timeout = timeout
+
+    collect_thread = RecordingThread()
+    stop_event = threading.Event()
+
+    with caplog.at_level("INFO"):
+        summary = dual_collect.stop_collection(
+            stop_event,
+            collect_thread,
+            session_dir=str(tmp_path),
+            camera_names=["cam_test"],
+        )
+
+    assert stop_event.is_set()
+    assert collect_thread.join_timeout is None
+    assert summary == {
+        "cameras": {"cam_test": {"color": 2, "depth": 2}},
+        "robot": {"tcps": 3, "angles": 3},
+        "force": 4,
+    }
+    assert "Saving episode" in caplog.text
+    assert "Episode saved" in caplog.text
+    assert "color=2" in caplog.text
+    assert "tcps=3" in caplog.text
+    assert "force=4" in caplog.text
+
+
 def test_collect_teleop_data_uses_independent_camera_robot_and_force_fps(
     tmp_path, monkeypatch
 ):

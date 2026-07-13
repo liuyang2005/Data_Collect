@@ -272,6 +272,43 @@ def save_camera_timestamps(
         )
 
 
+def _array_row_count(path: str) -> int:
+    if not os.path.isfile(path):
+        return 0
+    array = np.load(path, mmap_mode="r")
+    return int(array.shape[0]) if array.ndim > 0 else 1
+
+
+def _png_count(path: str) -> int:
+    if not os.path.isdir(path):
+        return 0
+    return sum(
+        entry.is_file() and entry.name.lower().endswith(".png")
+        for entry in os.scandir(path)
+    )
+
+
+def summarize_episode(session_dir: str, camera_names: Sequence[str]) -> dict:
+    cameras = {}
+    for camera_name in camera_names:
+        camera_dir = os.path.join(session_dir, camera_name)
+        cameras[camera_name] = {
+            "color": _png_count(os.path.join(camera_dir, "color")),
+            "depth": _png_count(os.path.join(camera_dir, "depth")),
+        }
+
+    return {
+        "cameras": cameras,
+        "robot": {
+            "tcps": _array_row_count(os.path.join(session_dir, "tcps.npy")),
+            "angles": _array_row_count(os.path.join(session_dir, "angles.npy")),
+        },
+        "force": _array_row_count(
+            os.path.join(session_dir, "ext_wrench_in_tcp.npy")
+        ),
+    }
+
+
 def collect_camera_stream(
     cameras: Mapping[str, Any],
     session_dir: str,
@@ -295,8 +332,8 @@ def collect_camera_stream(
     try:
         while not stop_event.is_set():
             actual_rate = rate_control.sleep()
-            sample_time = time.time()
             queued_cameras = enqueue_camera_frames(cameras, frame_queue, frame_idx)
+            sample_time = time.time()
             for camera_name in queued_cameras:
                 camera_timestamps[camera_name].append(sample_time)
 
@@ -430,12 +467,12 @@ def collect_robot_stream(
 
     while not stop_event.is_set():
         actual_rate = rate_control.sleep()
-        sample_time = time.time()
 
         tcp_xyz, tcp_quat_xyzw, slave_joint_angles, _ = _read_robot_sample_locked(
             state_reader,
             state_reader_lock,
         )
+        sample_time = time.time()
         slave_gripper_width = slave_gripper.read() if use_gripper else 0.0
 
         pose_data = np.concatenate([tcp_xyz, tcp_quat_xyzw, [slave_gripper_width]])
@@ -472,12 +509,12 @@ def collect_force_stream(
 
     while not stop_event.is_set():
         actual_rate = rate_control.sleep()
-        sample_time = time.time()
 
         _, _, _, ext_wrench_in_tcp = _read_robot_sample_locked(
             state_reader,
             state_reader_lock,
         )
+        sample_time = time.time()
         ext_wrench_rows.append(ext_wrench_in_tcp)
         timestamps_host_s.append(sample_time)
 

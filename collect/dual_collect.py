@@ -165,11 +165,39 @@ def sync_gripper(master_gripper, slave_gripper, last_width, eps, wait_time):
     return last_width
 
 
-def stop_collection(stop_event, collect_thread) -> None:
+def stop_collection(
+    stop_event,
+    collect_thread,
+    session_dir=None,
+    camera_names=(),
+):
     if stop_event is not None:
         stop_event.set()
     if collect_thread is not None:
-        collect_thread.join(timeout=2.0)
+        logger.info("Saving episode: %s", session_dir or "")
+        collect_thread.join()
+
+    if session_dir is None:
+        return None
+
+    from dual_collect_utils import summarize_episode
+
+    summary = summarize_episode(session_dir, camera_names)
+    camera_counts = ", ".join(
+        (
+            f"{name}(color={counts['color']}, depth={counts['depth']})"
+        )
+        for name, counts in summary["cameras"].items()
+    )
+    logger.info(
+        "Episode saved: %s | cameras=[%s] | tcps=%d, angles=%d, force=%d",
+        session_dir,
+        camera_counts,
+        summary["robot"]["tcps"],
+        summary["robot"]["angles"],
+        summary["force"],
+    )
+    return summary
 
 
 def start_recording(
@@ -240,6 +268,7 @@ def run_keyboard_loop(
     last_master_width = None
     stop_event = None
     collect_thread = None
+    session_dir = None
     print(
         "Keyboard control enabled: press 'r' to start teleop, 's' to stop teleop, "
         "'c' to start recording, 'v' to stop recording, 'q' to quit"
@@ -272,9 +301,15 @@ def run_keyboard_loop(
                 recording = True
                 logger.info("Recording started: %s", session_dir)
             elif key == "v" and recording:
-                stop_collection(stop_event, collect_thread)
+                stop_collection(
+                    stop_event,
+                    collect_thread,
+                    session_dir=session_dir,
+                    camera_names=d415_cameras.keys(),
+                )
                 stop_event = None
                 collect_thread = None
+                session_dir = None
                 recording = False
                 logger.info("Recording stopped")
             elif key == "q":
@@ -293,7 +328,12 @@ def run_keyboard_loop(
             time.sleep(null_space_period)
     finally:
         if recording:
-            stop_collection(stop_event, collect_thread)
+            stop_collection(
+                stop_event,
+                collect_thread,
+                session_dir=session_dir,
+                camera_names=d415_cameras.keys(),
+            )
         termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_term_settings)
         if activated:
             teleop_pair.activate(False)
