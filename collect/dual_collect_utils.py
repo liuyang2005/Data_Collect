@@ -16,6 +16,12 @@ D415_CAMERAS = {
 }
 
 
+def configure_headless_input_backend() -> None:
+    """Allow r3kit/xensesdk imports on SSH sessions without an X display."""
+    if not os.environ.get("DISPLAY"):
+        os.environ.setdefault("PYNPUT_BACKEND", "dummy")
+
+
 class RealSenseD415:
     """D415 wrapper with the core behavior used by r3kit's D415 implementation."""
 
@@ -152,6 +158,7 @@ def init_cameras(
 
 
 def init_xense(gripper_id: str, name: str = "Xense"):
+    configure_headless_input_backend()
     from r3kit.devices.gripper.xense.xense import Xense
 
     gripper = Xense(id=gripper_id, name=name)
@@ -195,6 +202,7 @@ def init_angler_controller(
     close_width: float,
     name: str = "master_angler",
 ) -> AnglerGripperController:
+    configure_headless_input_backend()
     from r3kit.devices.encoder.pdcd.angler import Angler
 
     encoder = Angler(
