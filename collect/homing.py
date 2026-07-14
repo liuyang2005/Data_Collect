@@ -25,7 +25,8 @@ def parse_args():
     return parser.parse_args()
 
 
-FIXED_INITIAL_JOINTS_DEG = [0.87, 0.71, 6.22, 107.67, 5.33, 20.44, 50.42]
+FIXED_INITIAL_JOINTS_DEG = [0, -40, 0, 90, 0, 40, 45]
+FIXED_INITIAL_GRIPPER_WIDTH = 0.08
 
 CUSTOM_HOME_JOINTS_DEG = {
     1: FIXED_INITIAL_JOINTS_DEG.copy(),
@@ -41,7 +42,7 @@ def home_robot(robot_id):
         tool_name = "tool1"
     elif robot_id == 2:
         robot_sn = "Rizon4s-063586"
-        tool_name = "xense"
+        tool_name = "hapticexoteleop"
     else:
         raise ValueError("Invalid robot ID")
 

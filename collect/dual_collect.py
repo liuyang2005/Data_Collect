@@ -18,6 +18,8 @@ from datetime import datetime
 
 DEFAULT_FPS = 30
 
+from homing import FIXED_INITIAL_GRIPPER_WIDTH
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -85,7 +87,7 @@ def parse_args():
     parser.add_argument("--angler-close-angle", type=float, default=16.61, help="Angle when slave gripper should be closed")
     parser.add_argument("--slave-open-width", type=float, default=0.085, help="Slave gripper open width in meters")
     parser.add_argument("--slave-close-width", type=float, default=0.0, help="Slave gripper closed width in meters")
-    parser.add_argument("--initial-gripper-width", type=float, default=0.08, help="Slave gripper width used at startup and exit")
+    parser.add_argument("--initial-gripper-width", type=float, default=FIXED_INITIAL_GRIPPER_WIDTH, help="Slave gripper width used at startup and exit")
     parser.add_argument(
         "--home-on-exit",
         type=parse_bool,
@@ -225,6 +227,7 @@ def build_metadata(args, camera_serials, tdk_tcp_pose_order, saved_tcp_pose_orde
             "slave_gripper_width_source": (
                 "slave_gripper.read()" if args.use_gripper else "constant_zero"
             ),
+            "fixed_initial_gripper_width_m": args.initial_gripper_width,
         }
     )
     return metadata

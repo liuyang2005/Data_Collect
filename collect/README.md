@@ -5,7 +5,7 @@
 - `dual_collect.py`：数据采集主入口。
 - `transparent_teleop.py`：Flexiv TDK `TransparentCartesianTeleopLAN` 遥操作封装。
 - `dual_teleop.py`：旧版 `CartesianTeleopLAN` 封装，保留作参考。
-- `dual_collect_utils.py`：相机、夹爪、目录创建和多频率数据保存工具。
+- `dual_collect_utils.py`：相机、夹爪、目录创建和多频率数据保存工具，默认采集主视角相机和腕部相机。
 - `homing.py`：固定初始关节角复原脚本。
 
 ## 基本用法
@@ -107,6 +107,10 @@ record_YYYYmmdd_HHMMSS/
     color/
     depth/
     timestamps_host_s.npy
+  cam_260322274925_wrist/
+    color/
+    depth/
+    timestamps_host_s.npy
   tcps.npy
   tcps_timestamps_host_s.npy
   angles.npy
@@ -118,8 +122,10 @@ record_YYYYmmdd_HHMMSS/
 
 保存格式：
 
-- `cam_*/color/*.png`：RGB 图像，文件名为相机线程内连续帧号。
-- `cam_*/depth/*.png`：depth 图像，文件名与同一相机线程内 color 帧号一致。
+- `cam_327322062498/color/*.png`：主视角 RGB 图像，文件名为相机线程内连续帧号。
+- `cam_260322274925_wrist/color/*.png`：腕部相机 RGB 图像。
+- `cam_*/color/*.png`：任意相机 RGB 图像通配路径。
+- `cam_*/depth/*.png`：对应相机的 depth 图像，文件名与同一相机 color 帧号一致。
 - `cam_*/timestamps_host_s.npy`：`(T_camera,)`，相机帧保存时的主机时间戳，单位秒。
 - `tcps.npy`：`(T, 8)`，每行 `[x, y, z, qx, qy, qz, qw, gripper_width]`
 - `angles.npy`：`(T, 8)`，每行 `[q1, q2, q3, q4, q5, q6, q7, gripper_width]`

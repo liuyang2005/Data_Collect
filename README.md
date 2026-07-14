@@ -82,6 +82,12 @@ record_YYYYmmdd_HHMMSS_xxxxxx/
     depth/
       0000000000000000.png
     timestamps_host_s.npy
+  cam_260322274925_wrist/
+    color/
+      0000000000000000.png
+    depth/
+      0000000000000000.png
+    timestamps_host_s.npy
   tcps.npy
   tcps_timestamps_host_s.npy
   angles.npy
@@ -98,6 +104,7 @@ record_YYYYmmdd_HHMMSS_xxxxxx/
 - `ext_wrench_in_tcp.npy`：从端 TCP 坐标系下外力/力矩，格式为 `[fx, fy, fz, tx, ty, tz]`。
 - `*_timestamps_host_s.npy`：主机时间戳，单位为 Unix epoch 秒。
 - `metadata.json`：采集参数、相机序列号、采样频率和位姿格式说明。
+- 默认相机目录：`cam_327322062498` 为主视角，`cam_260322274925_wrist` 为腕部相机。
 
 ## 代码目录
 
@@ -186,7 +193,7 @@ python validate_data/visualize_hdf5_pointcloud.py \
 - 启动采集前确认两台机械臂无人占用、急停和远程模式状态正常。
 - 不要在机械臂被他人使用时运行 `collect/run_dual_collect.sh` 或 `collect/homing.py`。
 - `HOME_ON_EXIT=true` 只在程序完成初始化并进入键盘控制后生效。
-- RealSense 相机默认使用 `cam_327322062498`，如更换相机，需要同步更新 `collect/dual_collect_utils.py` 和后处理脚本中的 `CAMERA_NAME`。
+- RealSense 相机默认采集 `cam_327322062498` 主视角和 `cam_260322274925_wrist` 腕部相机；后处理脚本一次导出一个相机视角，需要在对应脚本中设置 `CAMERA_NAME`。
 - 公开仓库前建议清理真实设备序列号、Xense ID、本机路径和实验数据路径。
 
 ## 参考
