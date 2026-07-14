@@ -54,6 +54,8 @@ NULL_SPACE_PERIOD="0.1"
 HOME_ON_EXIT="true"
 HOME_ROBOT_IDS="1,2"
 HOME_DELAY="0.5"
+HOME_RETRIES="3"
+HOME_RETRY_DELAY="2.0"
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
@@ -72,7 +74,9 @@ set -- \
   --null-space-period "$NULL_SPACE_PERIOD" \
   --home-on-exit "$HOME_ON_EXIT" \
   --home-robot-ids "$HOME_ROBOT_IDS" \
-  --home-delay "$HOME_DELAY"
+  --home-delay "$HOME_DELAY" \
+  --home-retries "$HOME_RETRIES" \
+  --home-retry-delay "$HOME_RETRY_DELAY"
 
 if [ -n "$SESSION_NAME" ]; then
   set -- "$@" --session-name "$SESSION_NAME"

@@ -97,6 +97,8 @@ def parse_args():
         help="Comma-separated robot IDs to home on exit, for example 1,2",
     )
     parser.add_argument("--home-delay", type=float, default=0.5, help="Delay before homing on exit")
+    parser.add_argument("--home-retries", type=int, default=3, help="Maximum homing attempts per robot on exit")
+    parser.add_argument("--home-retry-delay", type=float, default=2.0, help="Delay between homing retries")
     args = parser.parse_args()
     if args.fps <= 0:
         parser.error("--fps must be positive")
@@ -106,6 +108,10 @@ def parse_args():
         parser.error("--robot-fps must be positive")
     if args.force_fps is not None and args.force_fps <= 0:
         parser.error("--force-fps must be positive")
+    if args.home_retries <= 0:
+        parser.error("--home-retries must be positive")
+    if args.home_retry_delay < 0:
+        parser.error("--home-retry-delay must be non-negative")
     if args.use_gripper and not args.slave_gripper_id:
         parser.error("--use-gripper true requires --slave-gripper-id")
     if args.use_gripper and args.angler_open_angle == args.angler_close_angle:
@@ -148,12 +154,33 @@ def home_robots_on_exit(args):
 
     ok = True
     for robot_id in parse_home_robot_ids(args.home_robot_ids):
-        try:
-            logger.info("Homing robot %d on exit", robot_id)
-            home_robot(robot_id)
-        except Exception as exc:
-            ok = False
-            logger.exception("Failed to home robot %d on exit: %s", robot_id, exc)
+        robot_ok = False
+        for attempt in range(1, args.home_retries + 1):
+            try:
+                logger.info(
+                    "Homing robot %d on exit (attempt %d/%d)",
+                    robot_id,
+                    attempt,
+                    args.home_retries,
+                )
+                home_robot(robot_id)
+                robot_ok = True
+                break
+            except Exception as exc:
+                if attempt >= args.home_retries:
+                    logger.exception("Failed to home robot %d on exit: %s", robot_id, exc)
+                else:
+                    logger.warning(
+                        "Failed to home robot %d on exit attempt %d/%d: %s; retrying in %.1fs",
+                        robot_id,
+                        attempt,
+                        args.home_retries,
+                        exc,
+                        args.home_retry_delay,
+                    )
+                    if args.home_retry_delay > 0:
+                        time.sleep(args.home_retry_delay)
+        ok = ok and robot_ok
     return ok
 
 
