@@ -14,7 +14,14 @@ from pathlib import Path
 
 import numpy as np
 
-from datacollect_io import MAIN_CAMERA_NAME, discover_sessions, nearest_indices, select_camera_dir, sorted_numeric_files
+from datacollect_io import (
+    MAIN_CAMERA_NAME,
+    discover_sessions,
+    nearest_indices,
+    select_camera_dir,
+    session_arrays,
+    sorted_numeric_files,
+)
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DATA_COLLECT_ROOT = SCRIPT_DIR.parent
@@ -138,12 +145,13 @@ def convert_session(session: Path, split: str, output_root: Path, source_camera_
     color_files = sorted_numeric_files(source_cam_dir / "color")
     depth_files = sorted_numeric_files(source_cam_dir / "depth")
     cam_ts = np.load(source_cam_dir / "timestamps_host_s.npy")
-    tcps = np.load(session / "tcps.npy")
-    tcp_ts = np.load(session / "tcps_timestamps_host_s.npy")
-    angles = np.load(session / "angles.npy") if (session / "angles.npy").is_file() else None
-    angles_ts = np.load(session / "angles_timestamps_host_s.npy") if (session / "angles_timestamps_host_s.npy").is_file() else tcp_ts
-    wrench = np.load(session / "ext_wrench_in_tcp.npy")
-    wrench_ts = np.load(session / "ext_wrench_in_tcp_timestamps_host_s.npy")
+    arrays = session_arrays(session)
+    tcps = arrays["tcps"]
+    tcp_ts = arrays["tcp_ts"]
+    angles = arrays["angles"]
+    angles_ts = arrays["angle_ts"]
+    wrench = arrays["wrench"]
+    wrench_ts = arrays["wrench_ts"]
 
     if not (len(color_files) == len(depth_files) == len(cam_ts)):
         raise RuntimeError(f"Camera count mismatch in {session.name}: color={len(color_files)}, depth={len(depth_files)}, ts={len(cam_ts)}")
