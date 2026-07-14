@@ -2,8 +2,9 @@
 """
 Dual-arm teleoperation data collection entrypoint.
 
-This script only orchestrates devices and threads. TDK teleoperation lives in
-dual_teleop.py, and data saving utilities live in dual_collect_utils.py.
+This script only orchestrates devices and threads. Transparent TDK
+teleoperation lives in transparent_teleop.py, and data saving utilities live
+in dual_collect_utils.py.
 """
 
 import argparse
@@ -84,6 +85,18 @@ def parse_args():
     parser.add_argument("--angler-close-angle", type=float, default=16.61, help="Angle when slave gripper should be closed")
     parser.add_argument("--slave-open-width", type=float, default=0.085, help="Slave gripper open width in meters")
     parser.add_argument("--slave-close-width", type=float, default=0.0, help="Slave gripper closed width in meters")
+    parser.add_argument(
+        "--home-on-exit",
+        type=parse_bool,
+        default=False,
+        help="Move configured robots back to the fixed initial joint pose when the program exits",
+    )
+    parser.add_argument(
+        "--home-robot-ids",
+        default="1,2",
+        help="Comma-separated robot IDs to home on exit, for example 1,2",
+    )
+    parser.add_argument("--home-delay", type=float, default=0.5, help="Delay before homing on exit")
     args = parser.parse_args()
     if args.fps <= 0:
         parser.error("--fps must be positive")
@@ -112,6 +125,38 @@ def parse_bool(value):
     raise argparse.ArgumentTypeError("Expected true or false")
 
 
+def parse_home_robot_ids(value):
+    robot_ids = []
+    for raw_id in value.split(","):
+        raw_id = raw_id.strip()
+        if not raw_id:
+            continue
+        robot_id = int(raw_id)
+        if robot_id not in (1, 2):
+            raise ValueError(f"Invalid robot id in --home-robot-ids: {robot_id}")
+        robot_ids.append(robot_id)
+    return robot_ids
+
+
+def home_robots_on_exit(args):
+    if not args.home_on_exit:
+        return True
+    if args.home_delay > 0:
+        time.sleep(args.home_delay)
+
+    from homing import home_robot
+
+    ok = True
+    for robot_id in parse_home_robot_ids(args.home_robot_ids):
+        try:
+            logger.info("Homing robot %d on exit", robot_id)
+            home_robot(robot_id)
+        except Exception as exc:
+            ok = False
+            logger.exception("Failed to home robot %d on exit: %s", robot_id, exc)
+    return ok
+
+
 def build_metadata(args, camera_serials, tdk_tcp_pose_order, saved_tcp_pose_order):
     metadata = vars(args).copy()
     metadata.update(
@@ -122,9 +167,9 @@ def build_metadata(args, camera_serials, tdk_tcp_pose_order, saved_tcp_pose_orde
             "effective_camera_fps": args.camera_fps or args.fps,
             "effective_robot_fps": args.robot_fps or args.fps,
             "effective_force_fps": args.force_fps or args.robot_fps or args.fps,
-            "tcp_pose_source": "CartesianTeleopLAN.robot_states()[1].tcp_pose",
+            "tcp_pose_source": "TransparentCartesianTeleopLAN.robot_states()[1].tcp_pose",
             "ext_wrench_in_tcp_source": (
-                "CartesianTeleopLAN.robot_states()[1].ext_wrench_in_tcp"
+                "TransparentCartesianTeleopLAN.robot_states()[1].ext_wrench_in_tcp"
             ),
             "tdk_tcp_pose_order": tdk_tcp_pose_order,
             "saved_tcp_pose_order": saved_tcp_pose_order,
@@ -278,7 +323,7 @@ def run_keyboard_loop(
     tty.setcbreak(sys.stdin.fileno())
 
     try:
-        while not teleop_pair.any_fault():
+        while not teleop_pair.any_fault() and not teleop_pair.is_stopped():
             key = _read_key_nonblocking()
             if key == "r" and not activated:
                 teleop_pair.activate(True)
@@ -342,10 +387,10 @@ def run_keyboard_loop(
 def main() -> None:
     args = parse_args()
 
-    from dual_teleop import (
+    from transparent_teleop import (
         SAVED_TCP_POSE_ORDER,
         TDK_TCP_POSE_ORDER,
-        CartesianTeleopPair,
+        TransparentCartesianTeleopPair,
         TeleopSlaveStateReader,
     )
     from dual_collect_utils import (
@@ -355,8 +400,10 @@ def main() -> None:
         init_xense,
     )
 
+    exit_code = 0
+    ready_for_exit_homing = False
     try:
-        with CartesianTeleopPair(
+        with TransparentCartesianTeleopPair(
             args.first_sn,
             args.second_sn,
             network_interface_whitelist=args.network_interface,
@@ -379,6 +426,7 @@ def main() -> None:
 
             cameras = init_cameras(D415_CAMERAS, args.camera_fps or args.fps)
             state_reader = TeleopSlaveStateReader(teleop_pair)
+            ready_for_exit_homing = True
 
             run_keyboard_loop(
                 args,
@@ -397,7 +445,15 @@ def main() -> None:
             )
     except Exception as e:
         logger.error(str(e))
-        sys.exit(1)
+        exit_code = 1
+    finally:
+        if ready_for_exit_homing:
+            if not home_robots_on_exit(args):
+                exit_code = 1
+        elif args.home_on_exit:
+            logger.info("Skipping exit homing because initialization did not finish")
+
+    sys.exit(exit_code)
 
 
 if __name__ == "__main__":
