@@ -51,12 +51,14 @@ s 暂停遥操作 -> q 退出程序
 
 ## 固定初始点
 
-固定初始点在 `collect/homing.py` 中配置，单位为 degree：
+主端和从端共用同一个固定初始点，在 `collect/homing.py` 中配置，单位为 degree：
 
 ```python
+FIXED_INITIAL_JOINTS_DEG = [0.87, 0.71, 6.22, 107.67, 5.33, 20.44, 50.42]
+
 CUSTOM_HOME_JOINTS_DEG = {
-    1: [0.87, 0.71, 6.22, 107.67, 5.33, 20.44, 50.42],
-    2: [0.87, 0.71, 6.22, 107.67, 5.33, 20.44, 50.42],
+    1: FIXED_INITIAL_JOINTS_DEG.copy(),
+    2: FIXED_INITIAL_JOINTS_DEG.copy(),
 }
 ```
 
