@@ -39,6 +39,7 @@ ANGLER_OPEN_ANGLE="51.68"
 ANGLER_CLOSE_ANGLE="16.61"
 SLAVE_OPEN_WIDTH="0.08"
 SLAVE_CLOSE_WIDTH="0.0"
+INITIAL_GRIPPER_WIDTH="0.08"
 
 # Optional LAN interface whitelist. Leave empty to let TDK try all interfaces.
 # Multiple addresses can be separated by spaces, for example:
@@ -93,7 +94,8 @@ if [ "$USE_GRIPPER" = "true" ]; then
     --angler-open-angle "$ANGLER_OPEN_ANGLE" \
     --angler-close-angle "$ANGLER_CLOSE_ANGLE" \
     --slave-open-width "$SLAVE_OPEN_WIDTH" \
-    --slave-close-width "$SLAVE_CLOSE_WIDTH"
+    --slave-close-width "$SLAVE_CLOSE_WIDTH" \
+    --initial-gripper-width "$INITIAL_GRIPPER_WIDTH"
 fi
 
 for interface in $NETWORK_INTERFACES; do

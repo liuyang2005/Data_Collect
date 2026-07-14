@@ -64,6 +64,7 @@ python collect/dual_collect.py \
 --home-on-exit true
 --home-robot-ids 1,2
 --home-delay 0.5
+--initial-gripper-width 0.08
 ```
 
 `--fps` 是兼容旧脚本的默认频率；如果没有显式传入 `--camera-fps` 或 `--robot-fps`，对应数据流会回退使用 `--fps`；如果没有显式传入 `--force-fps`，力数据会回退使用 `--robot-fps`，再回退到 `--fps`。当前多频版本中：

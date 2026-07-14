@@ -85,6 +85,7 @@ def parse_args():
     parser.add_argument("--angler-close-angle", type=float, default=16.61, help="Angle when slave gripper should be closed")
     parser.add_argument("--slave-open-width", type=float, default=0.085, help="Slave gripper open width in meters")
     parser.add_argument("--slave-close-width", type=float, default=0.0, help="Slave gripper closed width in meters")
+    parser.add_argument("--initial-gripper-width", type=float, default=0.08, help="Slave gripper width used at startup and exit")
     parser.add_argument(
         "--home-on-exit",
         type=parse_bool,
@@ -112,6 +113,8 @@ def parse_args():
         parser.error("--home-retries must be positive")
     if args.home_retry_delay < 0:
         parser.error("--home-retry-delay must be non-negative")
+    if args.initial_gripper_width < 0:
+        parser.error("--initial-gripper-width must be non-negative")
     if args.use_gripper and not args.slave_gripper_id:
         parser.error("--use-gripper true requires --slave-gripper-id")
     if args.use_gripper and args.angler_open_angle == args.angler_close_angle:
@@ -225,6 +228,15 @@ def build_metadata(args, camera_serials, tdk_tcp_pose_order, saved_tcp_pose_orde
         }
     )
     return metadata
+
+
+def move_slave_gripper_to_initial_width(args, slave_gripper) -> None:
+    if not args.use_gripper or slave_gripper is None:
+        return
+    logger.info("Moving slave gripper to initial width %.3f m", args.initial_gripper_width)
+    slave_gripper.move(args.initial_gripper_width)
+    if args.gripper_wait_time > 0:
+        time.sleep(args.gripper_wait_time)
 
 
 def sync_gripper(master_gripper, slave_gripper, last_width, eps, wait_time):
@@ -429,6 +441,7 @@ def main() -> None:
 
     exit_code = 0
     ready_for_exit_homing = False
+    slave_gripper = None
     try:
         with TransparentCartesianTeleopPair(
             args.first_sn,
@@ -450,6 +463,7 @@ def main() -> None:
                     open_width=args.slave_open_width,
                     close_width=args.slave_close_width,
                 )
+                move_slave_gripper_to_initial_width(args, slave_gripper)
 
             cameras = init_cameras(D415_CAMERAS, args.camera_fps or args.fps)
             state_reader = TeleopSlaveStateReader(teleop_pair)
@@ -475,6 +489,11 @@ def main() -> None:
         exit_code = 1
     finally:
         if ready_for_exit_homing:
+            try:
+                move_slave_gripper_to_initial_width(args, slave_gripper)
+            except Exception as e:
+                logger.exception("Failed to restore slave gripper initial width on exit: %s", e)
+                exit_code = 1
             if not home_robots_on_exit(args):
                 exit_code = 1
         elif args.home_on_exit:
