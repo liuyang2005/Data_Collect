@@ -12,19 +12,23 @@ import numpy as np
 MAIN_CAMERA_NAME = "cam_327322062498"
 WRIST_CAMERA_NAME = "cam_260322274925_wrist"
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg"}
-REQUIRED_SESSION_FILES = (
+NEW_ROBOT_FILES = ("tcp_pose.npy", "tcp_vel.npy", "q.npy", "timestamps_host_s.npy")
+LEGACY_ROBOT_FILES = (
     "tcps.npy",
     "tcps_timestamps_host_s.npy",
     "angles.npy",
     "angles_timestamps_host_s.npy",
-    "ext_wrench_in_tcp.npy",
-    "ext_wrench_in_tcp_timestamps_host_s.npy",
 )
+WRENCH_FILES = ("ext_wrench_in_tcp.npy", "ext_wrench_in_tcp_timestamps_host_s.npy")
 
 
 def is_session_dir(path: Path) -> bool:
     path = Path(path)
-    return path.is_dir() and (path / "tcps.npy").is_file()
+    robot_dir = path / "robot"
+    has_new_robot = all((robot_dir / name).is_file() for name in NEW_ROBOT_FILES)
+    has_legacy_robot = all((path / name).is_file() for name in LEGACY_ROBOT_FILES)
+    has_wrench = all((path / name).is_file() for name in WRENCH_FILES)
+    return path.is_dir() and (has_new_robot or has_legacy_robot) and has_wrench
 
 
 def discover_sessions(source: Path | str) -> list[Path]:
@@ -173,11 +177,27 @@ def percentile_dict(values: Sequence[float] | np.ndarray, percentiles=(50, 90, 9
 
 def session_arrays(session: Path) -> dict:
     session = Path(session)
+    robot_dir = session / "robot"
+    if all((robot_dir / name).is_file() for name in NEW_ROBOT_FILES):
+        robot_ts = load_npy(robot_dir / "timestamps_host_s.npy", ndim=1)
+        tcps = load_npy(robot_dir / "tcp_pose.npy", ndim=2)
+        tcp_vel = load_npy(robot_dir / "tcp_vel.npy", ndim=2)
+        angles = load_npy(robot_dir / "q.npy", ndim=2)
+        tcp_ts = robot_ts
+        angle_ts = robot_ts
+    else:
+        tcps = load_npy(session / "tcps.npy", ndim=2)
+        tcp_vel = None
+        angles = load_npy(session / "angles.npy", ndim=2)
+        tcp_ts = load_npy(session / "tcps_timestamps_host_s.npy", ndim=1)
+        angle_ts = load_npy(session / "angles_timestamps_host_s.npy", ndim=1)
+
     return {
-        "tcps": load_npy(session / "tcps.npy", ndim=2),
-        "tcp_ts": load_npy(session / "tcps_timestamps_host_s.npy", ndim=1),
-        "angles": load_npy(session / "angles.npy", ndim=2),
-        "angle_ts": load_npy(session / "angles_timestamps_host_s.npy", ndim=1),
+        "tcps": tcps,
+        "tcp_vel": tcp_vel,
+        "tcp_ts": tcp_ts,
+        "angles": angles,
+        "angle_ts": angle_ts,
         "wrench": load_npy(session / "ext_wrench_in_tcp.npy", ndim=2),
         "wrench_ts": load_npy(session / "ext_wrench_in_tcp_timestamps_host_s.npy", ndim=1),
         "metadata": load_json(session / "metadata.json"),
