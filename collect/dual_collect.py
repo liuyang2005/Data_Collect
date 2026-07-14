@@ -200,15 +200,17 @@ def build_metadata(args, camera_serials, tdk_tcp_pose_order, saved_tcp_pose_orde
             "effective_robot_fps": args.robot_fps or args.fps,
             "effective_force_fps": args.force_fps or args.robot_fps or args.fps,
             "tcp_pose_source": "TransparentCartesianTeleopLAN.robot_states()[1].tcp_pose",
+            "tcp_vel_source": "TransparentCartesianTeleopLAN.robot_states()[1].tcp_vel",
             "ext_wrench_in_tcp_source": (
                 "TransparentCartesianTeleopLAN.robot_states()[1].ext_wrench_in_tcp"
             ),
             "tdk_tcp_pose_order": tdk_tcp_pose_order,
             "saved_tcp_pose_order": saved_tcp_pose_order,
             "robot_stream_files": {
-                "tcps": "tcps.npy",
-                "angles": "angles.npy",
-                "timestamps": "tcps_timestamps_host_s.npy, angles_timestamps_host_s.npy",
+                "tcp_pose": "robot/tcp_pose.npy",
+                "tcp_vel": "robot/tcp_vel.npy",
+                "q": "robot/q.npy",
+                "timestamps": "robot/timestamps_host_s.npy",
             },
             "force_stream_files": {
                 "ext_wrench_in_tcp": "ext_wrench_in_tcp.npy",
@@ -277,11 +279,12 @@ def stop_collection(
         for name, counts in summary["cameras"].items()
     )
     logger.info(
-        "Episode saved: %s | cameras=[%s] | tcps=%d, angles=%d, force=%d",
+        "Episode saved: %s | cameras=[%s] | tcp_pose=%d, tcp_vel=%d, q=%d, force=%d",
         session_dir,
         camera_counts,
-        summary["robot"]["tcps"],
-        summary["robot"]["angles"],
+        summary["robot"]["tcp_pose"],
+        summary["robot"]["tcp_vel"],
+        summary["robot"]["q"],
         summary["force"],
     )
     return summary

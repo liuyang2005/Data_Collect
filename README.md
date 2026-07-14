@@ -88,10 +88,11 @@ record_YYYYmmdd_HHMMSS_xxxxxx/
     depth/
       0000000000000000.png
     timestamps_host_s.npy
-  tcps.npy
-  tcps_timestamps_host_s.npy
-  angles.npy
-  angles_timestamps_host_s.npy
+  robot/
+    tcp_pose.npy
+    tcp_vel.npy
+    q.npy
+    timestamps_host_s.npy
   ext_wrench_in_tcp.npy
   ext_wrench_in_tcp_timestamps_host_s.npy
   metadata.json
@@ -99,10 +100,12 @@ record_YYYYmmdd_HHMMSS_xxxxxx/
 
 主要字段：
 
-- `tcps.npy`：从端 TCP，格式为 `[x, y, z, qx, qy, qz, qw, gripper_width]`。
-- `angles.npy`：从端 7 关节角加夹爪宽度，格式为 `[q1, ..., q7, gripper_width]`。
+- `robot/tcp_pose.npy`：从端 TCP，格式为 `[x, y, z, qx, qy, qz, qw, gripper_width]`。
+- `robot/tcp_vel.npy`：从端相对 world frame 的 TCP 速度，格式为 `[vx, vy, vz, wx, wy, wz]`，单位为 `[m/s, rad/s]`。
+- `robot/q.npy`：从端 7 关节角加夹爪宽度，格式为 `[q1, ..., q7, gripper_width]`。
+- `robot/timestamps_host_s.npy`：上述三个 robot 数组共用的主机时间戳。
 - `ext_wrench_in_tcp.npy`：从端 TCP 坐标系下外力/力矩，格式为 `[fx, fy, fz, tx, ty, tz]`。
-- `*_timestamps_host_s.npy`：主机时间戳，单位为 Unix epoch 秒。
+- `ext_wrench_in_tcp_timestamps_host_s.npy`：独立 wrench 流的主机时间戳。
 - `metadata.json`：采集参数、相机序列号、采样频率和位姿格式说明。
 - 默认相机目录：`cam_327322062498` 为主视角，`cam_260322274925_wrist` 为腕部相机。
 

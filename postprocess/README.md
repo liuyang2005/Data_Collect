@@ -95,11 +95,12 @@ acp_raw_dataset/
 转换规则：
 
 - `cam_*/color/*.png` -> `rgb_0/img_count_timestamp_ms.png`
-- `tcps.npy` -> `robot_data_0.json: ts_pose_fb`
+- 新格式 `robot/tcp_pose.npy` -> `robot_data_0.json: ts_pose_fb`
+- 旧格式 `tcps.npy` 与 `tcps_timestamps_host_s.npy` 仍可读取
 - `ts_pose_command` 复制 `ts_pose_fb`，这与 ACP 公开的 `real_data_processing.py` 行为一致
 - `ext_wrench_in_tcp.npy` -> `wrench_data_0.json: wrench`
-- `*_timestamps_host_s.npy` 是 Unix epoch 秒，输出前统一转换成相对毫秒
-- `tcps.npy` 中的四元数从 `[qx, qy, qz, qw]` 转成 ACP 的 `[qw, qx, qy, qz]`
+- `robot/timestamps_host_s.npy` 和 wrench/camera 时间戳是 Unix epoch 秒，输出前统一转换成相对毫秒
+- `robot/tcp_pose.npy`（或旧 `tcps.npy`）中的四元数从 `[qx, qy, qz, qw]` 转成 ACP 的 `[qw, qx, qy, qz]`
 - 新格式如果存在 `cam_*/timestamps_host_s.npy`，使用真实相机时间戳
 - 旧格式如果没有相机时间戳且相机帧数等于 robot 帧数，使用 robot 时间戳按索引兜底
 

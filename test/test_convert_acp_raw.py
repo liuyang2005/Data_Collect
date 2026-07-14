@@ -26,9 +26,15 @@ def write_fake_images(camera_dir: Path, count: int) -> None:
         (depth_dir / f"{idx:016d}.png").write_bytes(f"depth-{idx}".encode("ascii"))
 
 
-def write_common_arrays(session_dir: Path) -> None:
+def write_common_arrays(session_dir: Path, legacy: bool = False) -> None:
+    robot_dir = session_dir if legacy else session_dir / "robot"
+    robot_dir.mkdir(parents=True, exist_ok=True)
+    pose_name = "tcps.npy" if legacy else "tcp_pose.npy"
+    timestamp_name = (
+        "tcps_timestamps_host_s.npy" if legacy else "timestamps_host_s.npy"
+    )
     np.save(
-        session_dir / "tcps.npy",
+        robot_dir / pose_name,
         np.array(
             [
                 [1.0, 2.0, 3.0, 0.1, 0.2, 0.3, 0.9, 0.08],
@@ -38,9 +44,12 @@ def write_common_arrays(session_dir: Path) -> None:
         ),
     )
     np.save(
-        session_dir / "tcps_timestamps_host_s.npy",
+        robot_dir / timestamp_name,
         np.array([100.00, 100.05], dtype=np.float64),
     )
+    if not legacy:
+        np.save(robot_dir / "tcp_vel.npy", np.zeros((2, 6), dtype=np.float64))
+        np.save(robot_dir / "q.npy", np.zeros((2, 8), dtype=np.float64))
     np.save(
         session_dir / "ext_wrench_in_tcp.npy",
         np.array(
@@ -102,7 +111,7 @@ def test_convert_session_uses_robot_timestamps_for_legacy_camera_without_timesta
     session_dir = tmp_path / "record_legacy"
     camera_dir = session_dir / "cam_legacy"
     write_fake_images(camera_dir, 2)
-    write_common_arrays(session_dir)
+    write_common_arrays(session_dir, legacy=True)
 
     episode_dir = converter.convert_session(
         session_dir=session_dir,

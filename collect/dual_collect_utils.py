@@ -121,6 +121,7 @@ def create_session_dirs(
 
     session_dir = os.path.join(save_root, session_name)
     os.makedirs(session_dir, exist_ok=True)
+    os.makedirs(os.path.join(session_dir, "robot"), exist_ok=True)
 
     # camera directories
     if d415_cameras:
@@ -311,8 +312,13 @@ def summarize_episode(session_dir: str, camera_names: Sequence[str]) -> dict:
     return {
         "cameras": cameras,
         "robot": {
-            "tcps": _array_row_count(os.path.join(session_dir, "tcps.npy")),
-            "angles": _array_row_count(os.path.join(session_dir, "angles.npy")),
+            "tcp_pose": _array_row_count(
+                os.path.join(session_dir, "robot", "tcp_pose.npy")
+            ),
+            "tcp_vel": _array_row_count(
+                os.path.join(session_dir, "robot", "tcp_vel.npy")
+            ),
+            "q": _array_row_count(os.path.join(session_dir, "robot", "q.npy")),
         },
         "force": _array_row_count(
             os.path.join(session_dir, "ext_wrench_in_tcp.npy")
@@ -384,16 +390,19 @@ def _as_1d_array(name: str, value: Any, expected_size: Optional[int] = None) -> 
     return array
 
 
-def read_robot_sample(state_reader) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Return tcp xyz, tcp quat xyzw, joint q, and ext_wrench_in_tcp."""
+def read_robot_sample(
+    state_reader,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Return tcp xyz, tcp quat xyzw, joint q, tcp_vel, and ext wrench."""
     if hasattr(state_reader, "read_robot_sample"):
-        tcp_xyz, tcp_quat_xyzw, joint_angles, ext_wrench_in_tcp = (
+        tcp_xyz, tcp_quat_xyzw, joint_angles, tcp_vel, ext_wrench_in_tcp = (
             state_reader.read_robot_sample()
         )
         return (
             _as_1d_array("tcp_xyz", tcp_xyz, 3),
             _as_1d_array("tcp_quat_xyzw", tcp_quat_xyzw, 4),
             _as_1d_array("joint_angles", joint_angles),
+            _as_1d_array("tcp_vel", tcp_vel, 6),
             _as_1d_array("ext_wrench_in_tcp", ext_wrench_in_tcp, 6),
         )
 
@@ -401,16 +410,17 @@ def read_robot_sample(state_reader) -> Tuple[np.ndarray, np.ndarray, np.ndarray,
         slave_state = state_reader.read_slave_state()
         tcp_xyz, tcp_quat_xyzw = tdk_pose_to_saved_xyzquat(slave_state.tcp_pose)
         joint_angles = _as_1d_array("joint_angles", slave_state.q)
+        tcp_vel = _as_1d_array("tcp_vel", slave_state.tcp_vel, 6)
         ext_wrench_in_tcp = _as_1d_array(
             "ext_wrench_in_tcp",
             slave_state.ext_wrench_in_tcp,
             6,
         )
-        return tcp_xyz, tcp_quat_xyzw, joint_angles, ext_wrench_in_tcp
+        return tcp_xyz, tcp_quat_xyzw, joint_angles, tcp_vel, ext_wrench_in_tcp
 
     raise AttributeError(
         "state_reader must provide read_robot_sample() or read_slave_state() "
-        "with tcp_pose, q, and ext_wrench_in_tcp fields"
+        "with tcp_pose, q, tcp_vel, and ext_wrench_in_tcp fields"
     )
 
 
@@ -423,23 +433,29 @@ def _read_robot_sample_locked(state_reader, state_reader_lock=None):
 
 def save_robot_streams(
     session_dir: str,
-    tcp_rows: Sequence[np.ndarray],
-    joint_rows: Sequence[np.ndarray],
+    tcp_pose_rows: Sequence[np.ndarray],
+    tcp_vel_rows: Sequence[np.ndarray],
+    q_rows: Sequence[np.ndarray],
     timestamps_host_s: Sequence[float],
 ) -> None:
     timestamps = np.asarray(timestamps_host_s, dtype=np.float64)
-    tcps = np.asarray(tcp_rows, dtype=np.float64)
-    angles = np.asarray(joint_rows, dtype=np.float64)
+    tcp_pose = np.asarray(tcp_pose_rows, dtype=np.float64)
+    tcp_vel = np.asarray(tcp_vel_rows, dtype=np.float64)
+    q = np.asarray(q_rows, dtype=np.float64)
 
-    if tcps.size == 0:
-        tcps = np.empty((0, 8), dtype=np.float64)
-    if angles.size == 0:
-        angles = np.empty((0, 8), dtype=np.float64)
+    if tcp_pose.size == 0:
+        tcp_pose = np.empty((0, 8), dtype=np.float64)
+    if tcp_vel.size == 0:
+        tcp_vel = np.empty((0, 6), dtype=np.float64)
+    if q.size == 0:
+        q = np.empty((0, 8), dtype=np.float64)
 
-    np.save(os.path.join(session_dir, "tcps.npy"), tcps)
-    np.save(os.path.join(session_dir, "angles.npy"), angles)
-    np.save(os.path.join(session_dir, "tcps_timestamps_host_s.npy"), timestamps)
-    np.save(os.path.join(session_dir, "angles_timestamps_host_s.npy"), timestamps)
+    robot_dir = os.path.join(session_dir, "robot")
+    os.makedirs(robot_dir, exist_ok=True)
+    np.save(os.path.join(robot_dir, "tcp_pose.npy"), tcp_pose)
+    np.save(os.path.join(robot_dir, "tcp_vel.npy"), tcp_vel)
+    np.save(os.path.join(robot_dir, "q.npy"), q)
+    np.save(os.path.join(robot_dir, "timestamps_host_s.npy"), timestamps)
 
 
 def save_force_stream(
@@ -472,14 +488,15 @@ def collect_robot_stream(
 ) -> None:
     rate_control = RateControl(robot_fps)
     frame_idx = 0
-    tcp_rows = []
-    joint_rows = []
+    tcp_pose_rows = []
+    tcp_vel_rows = []
+    q_rows = []
     timestamps_host_s = []
 
     while not stop_event.is_set():
         actual_rate = rate_control.sleep()
 
-        tcp_xyz, tcp_quat_xyzw, slave_joint_angles, _ = _read_robot_sample_locked(
+        tcp_xyz, tcp_quat_xyzw, slave_joint_angles, tcp_vel, _ = _read_robot_sample_locked(
             state_reader,
             state_reader_lock,
         )
@@ -488,8 +505,9 @@ def collect_robot_stream(
 
         pose_data = np.concatenate([tcp_xyz, tcp_quat_xyzw, [slave_gripper_width]])
         joint_data = np.concatenate([slave_joint_angles, [slave_gripper_width]])
-        tcp_rows.append(pose_data)
-        joint_rows.append(joint_data)
+        tcp_pose_rows.append(pose_data)
+        tcp_vel_rows.append(tcp_vel)
+        q_rows.append(joint_data)
         timestamps_host_s.append(sample_time)
 
         if status_period and frame_idx % status_period == 0:
@@ -499,8 +517,9 @@ def collect_robot_stream(
 
     save_robot_streams(
         session_dir=session_dir,
-        tcp_rows=tcp_rows,
-        joint_rows=joint_rows,
+        tcp_pose_rows=tcp_pose_rows,
+        tcp_vel_rows=tcp_vel_rows,
+        q_rows=q_rows,
         timestamps_host_s=timestamps_host_s,
     )
 
@@ -521,7 +540,7 @@ def collect_force_stream(
     while not stop_event.is_set():
         actual_rate = rate_control.sleep()
 
-        _, _, _, ext_wrench_in_tcp = _read_robot_sample_locked(
+        _, _, _, _, ext_wrench_in_tcp = _read_robot_sample_locked(
             state_reader,
             state_reader_lock,
         )
