@@ -1,5 +1,7 @@
 import argparse
 
+import numpy as np
+
 
 """
 Usage:
@@ -23,25 +25,40 @@ def parse_args():
     return parser.parse_args()
 
 
-def main():
+FIXED_INITIAL_JOINTS_DEG = [0, -40, 0, 90, 0, 40, 45]
+FIXED_INITIAL_GRIPPER_WIDTH = 0.08
+
+CUSTOM_HOME_JOINTS_DEG = {
+    1: FIXED_INITIAL_JOINTS_DEG.copy(),
+    2: FIXED_INITIAL_JOINTS_DEG.copy(),
+}
+
+
+def home_robot(robot_id):
     from r3kit.devices.robot.flexiv.rizon import Rizon
 
-    args = parse_args()
-    if args.robot_id == 1:
+    if robot_id == 1:
         robot_sn = "Rizon4s-063652"
-        print(f"Homing robot {args.robot_id}: {robot_sn}")
-        robot = Rizon(id=robot_sn, gripper=False, name="Rizon4s", tool_name="tool1")
-    elif args.robot_id == 2:
+        tool_name = "tool1"
+    elif robot_id == 2:
         robot_sn = "Rizon4s-063586"
-        print(f"Homing robot {args.robot_id}: {robot_sn}")
-        robot = Rizon(id=robot_sn, gripper=False, name="Rizon4s", tool_name="xense")
+        tool_name = "hapticexoteleop"
     else:
         raise ValueError("Invalid robot ID")
 
+    print(f"Homing robot {robot_id}: {robot_sn}")
+    robot = Rizon(id=robot_sn, gripper=False, name="Rizon4s", tool_name=tool_name)
+    target_joints_deg = np.asarray(CUSTOM_HOME_JOINTS_DEG[robot_id], dtype=np.float64)
+    print(f"Moving to custom home joints (deg): {target_joints_deg.tolist()}")
     robot.motion_mode("joint")
-    robot.homing()
+    robot.joint_move(np.deg2rad(target_joints_deg))
     robot.motion_mode("primitive")
     print("Homing command finished")
+
+
+def main():
+    args = parse_args()
+    home_robot(args.robot_id)
 
 
 if __name__ == "__main__":

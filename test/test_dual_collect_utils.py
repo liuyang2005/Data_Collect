@@ -5,6 +5,7 @@ import types
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 
 COLLECT_DIR = Path(__file__).resolve().parents[1] / "collect"
@@ -60,6 +61,7 @@ class FakeStateReader:
             np.array([idx, idx + 0.1, idx + 0.2]),
             np.array([0.0, 0.0, 0.0, 1.0]),
             np.array([idx, idx + 1, idx + 2, idx + 3, idx + 4, idx + 5, idx + 6]),
+            np.array([idx, idx + 0.01, idx + 0.02, idx + 0.03, idx + 0.04, idx + 0.05]),
             np.array([idx, idx + 10, idx + 20, idx + 30, idx + 40, idx + 50]),
         )
 
@@ -310,7 +312,24 @@ def test_dual_collect_accepts_independent_stream_fps(monkeypatch):
     assert args.force_fps == 200
 
 
-def test_collect_teleop_data_writes_one_npy_per_robot_stream(tmp_path, monkeypatch):
+def test_read_robot_sample_rejects_invalid_tcp_velocity_shape():
+    dcu = import_dual_collect_utils()
+
+    class InvalidVelocityReader:
+        def read_robot_sample(self):
+            return (
+                np.zeros(3),
+                np.array([0.0, 0.0, 0.0, 1.0]),
+                np.zeros(7),
+                np.zeros(5),
+                np.zeros(6),
+            )
+
+    with pytest.raises(ValueError, match="tcp_vel must have shape \\(6,\\)"):
+        dcu.read_robot_sample(InvalidVelocityReader())
+
+
+def test_collect_teleop_data_writes_aligned_robot_arrays(tmp_path, monkeypatch):
     dcu = import_dual_collect_utils()
     monkeypatch.setattr(dcu, "RateControl", FastRateControl)
 
@@ -328,22 +347,24 @@ def test_collect_teleop_data_writes_one_npy_per_robot_stream(tmp_path, monkeypat
         status_period=0,
     )
 
-    tcps = np.load(tmp_path / "tcps.npy")
-    angles = np.load(tmp_path / "angles.npy")
-    tcp_timestamps = np.load(tmp_path / "tcps_timestamps_host_s.npy")
-    angle_timestamps = np.load(tmp_path / "angles_timestamps_host_s.npy")
+    tcp_pose = np.load(tmp_path / "robot" / "tcp_pose.npy")
+    tcp_vel = np.load(tmp_path / "robot" / "tcp_vel.npy")
+    q = np.load(tmp_path / "robot" / "q.npy")
+    timestamps = np.load(tmp_path / "robot" / "timestamps_host_s.npy")
 
-    assert tcps.shape == (3, 8)
-    assert angles.shape == (3, 8)
-    np.testing.assert_allclose(tcps[:, -1], 0.0)
-    np.testing.assert_allclose(angles[:, -1], 0.0)
+    assert tcp_pose.shape == (3, 8)
+    assert tcp_vel.shape == (3, 6)
+    assert q.shape == (3, 8)
+    np.testing.assert_allclose(tcp_pose[:, -1], 0.0)
+    np.testing.assert_allclose(q[:, -1], 0.0)
+    np.testing.assert_allclose(tcp_vel[0], [1.0, 1.01, 1.02, 1.03, 1.04, 1.05])
 
-    assert tcp_timestamps.shape == (3,)
-    np.testing.assert_allclose(angle_timestamps, tcp_timestamps)
-    assert np.all(np.diff(tcp_timestamps) >= 0.0)
+    assert timestamps.shape == (3,)
+    assert np.all(np.diff(timestamps) >= 0.0)
 
-    assert not (tmp_path / "tcps").exists()
-    assert not (tmp_path / "angles").exists()
+    assert not (tmp_path / "tcps.npy").exists()
+    assert not (tmp_path / "angles.npy").exists()
+    assert not (tmp_path / "tcp_vel.npy").exists()
 
 
 def test_collect_camera_stream_writes_frames_and_host_timestamps(tmp_path, monkeypatch):
@@ -508,6 +529,7 @@ def test_robot_timestamp_is_recorded_after_state_read(tmp_path, monkeypatch):
                 np.array([0.0, 0.0, 0.0, 1.0]),
                 np.zeros(7),
                 np.zeros(6),
+                np.zeros(6),
             )
 
     dcu.collect_robot_stream(
@@ -520,7 +542,7 @@ def test_robot_timestamp_is_recorded_after_state_read(tmp_path, monkeypatch):
         status_period=0,
     )
 
-    timestamps = np.load(tmp_path / "tcps_timestamps_host_s.npy")
+    timestamps = np.load(tmp_path / "robot" / "timestamps_host_s.npy")
     np.testing.assert_allclose(timestamps, [20.0])
 
 
@@ -540,6 +562,7 @@ def test_force_timestamp_is_recorded_after_state_read(tmp_path, monkeypatch):
                 np.zeros(3),
                 np.array([0.0, 0.0, 0.0, 1.0]),
                 np.zeros(7),
+                np.zeros(6),
                 np.zeros(6),
             )
 
@@ -567,8 +590,11 @@ def test_stop_collection_waits_for_completion_and_reports_final_counts(
         (cam_dir / "color" / f"{idx:016d}.png").touch()
         (cam_dir / "depth" / f"{idx:016d}.png").touch()
 
-    np.save(tmp_path / "tcps.npy", np.zeros((3, 8)))
-    np.save(tmp_path / "angles.npy", np.zeros((3, 8)))
+    robot_dir = tmp_path / "robot"
+    robot_dir.mkdir()
+    np.save(robot_dir / "tcp_pose.npy", np.zeros((3, 8)))
+    np.save(robot_dir / "tcp_vel.npy", np.zeros((3, 6)))
+    np.save(robot_dir / "q.npy", np.zeros((3, 8)))
     np.save(tmp_path / "ext_wrench_in_tcp.npy", np.zeros((4, 6)))
 
     class RecordingThread:
@@ -593,13 +619,14 @@ def test_stop_collection_waits_for_completion_and_reports_final_counts(
     assert collect_thread.join_timeout is None
     assert summary == {
         "cameras": {"cam_test": {"color": 2, "depth": 2}},
-        "robot": {"tcps": 3, "angles": 3},
+        "robot": {"tcp_pose": 3, "tcp_vel": 3, "q": 3},
         "force": 4,
     }
     assert "Saving episode" in caplog.text
     assert "Episode saved" in caplog.text
     assert "color=2" in caplog.text
-    assert "tcps=3" in caplog.text
+    assert "tcp_pose=3" in caplog.text
+    assert "tcp_vel=3" in caplog.text
     assert "force=4" in caplog.text
 
 
@@ -643,7 +670,9 @@ def test_collect_teleop_data_uses_independent_camera_robot_and_force_fps(
     assert 5 in RecordingFastRateControl.rates
     assert 20 in RecordingFastRateControl.rates
     assert 80 in RecordingFastRateControl.rates
-    assert np.load(tmp_path / "tcps.npy").shape == (3, 8)
+    assert np.load(tmp_path / "robot" / "tcp_pose.npy").shape == (3, 8)
+    assert np.load(tmp_path / "robot" / "tcp_vel.npy").shape == (3, 6)
+    assert np.load(tmp_path / "robot" / "q.npy").shape == (3, 8)
     assert (tmp_path / "ext_wrench_in_tcp.npy").exists()
     assert (tmp_path / "ext_wrench_in_tcp_timestamps_host_s.npy").exists()
     assert (cam_dir / "timestamps_host_s.npy").exists()
@@ -681,6 +710,7 @@ def test_robot_and_force_streams_can_have_different_lengths(tmp_path, monkeypatc
                 np.zeros(3),
                 np.array([0.0, 0.0, 0.0, 1.0]),
                 np.zeros(7),
+                np.zeros(6),
                 np.array([idx, idx + 1, idx + 2, idx + 3, idx + 4, idx + 5]),
             )
 
@@ -692,7 +722,8 @@ def test_robot_and_force_streams_can_have_different_lengths(tmp_path, monkeypatc
         status_period=0,
     )
 
-    assert np.load(tmp_path / "tcps.npy").shape == (3, 8)
-    assert np.load(tmp_path / "angles.npy").shape == (3, 8)
+    assert np.load(tmp_path / "robot" / "tcp_pose.npy").shape == (3, 8)
+    assert np.load(tmp_path / "robot" / "tcp_vel.npy").shape == (3, 6)
+    assert np.load(tmp_path / "robot" / "q.npy").shape == (3, 8)
     assert np.load(tmp_path / "ext_wrench_in_tcp.npy").shape == (5, 6)
     assert np.load(tmp_path / "ext_wrench_in_tcp_timestamps_host_s.npy").shape == (5,)

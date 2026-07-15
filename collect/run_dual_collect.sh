@@ -17,7 +17,7 @@ FIRST_SN="Rizon4s-063652"
 SECOND_SN="Rizon4s-063586"
 
 # Data collection
-SAVE_ROOT="/home/xense/flexiv_rizon4s_workspace/Data/pick_0629"
+SAVE_ROOT="/home/xense/haptic_exo_teleop_ws/jiaqingke/Data/pick_0713"
 SESSION_NAME=""
 FPS="30"
 CAMERA_FPS="30"
@@ -39,6 +39,7 @@ ANGLER_OPEN_ANGLE="51.68"
 ANGLER_CLOSE_ANGLE="16.61"
 SLAVE_OPEN_WIDTH="0.08"
 SLAVE_CLOSE_WIDTH="0.0"
+INITIAL_GRIPPER_WIDTH="0.08"
 
 # Optional LAN interface whitelist. Leave empty to let TDK try all interfaces.
 # Multiple addresses can be separated by spaces, for example:
@@ -49,6 +50,13 @@ NETWORK_INTERFACES=""
 GRIPPER_EPS="0.0001"
 GRIPPER_WAIT_TIME="0.1"
 NULL_SPACE_PERIOD="0.1"
+
+# Return both robots to the fixed initial joint pose when the collector exits.
+HOME_ON_EXIT="true"
+HOME_ROBOT_IDS="1,2"
+HOME_DELAY="0.5"
+HOME_RETRIES="3"
+HOME_RETRY_DELAY="2.0"
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
@@ -64,7 +72,12 @@ set -- \
   --use-gripper "$USE_GRIPPER" \
   --gripper-eps "$GRIPPER_EPS" \
   --gripper-wait-time "$GRIPPER_WAIT_TIME" \
-  --null-space-period "$NULL_SPACE_PERIOD"
+  --null-space-period "$NULL_SPACE_PERIOD" \
+  --home-on-exit "$HOME_ON_EXIT" \
+  --home-robot-ids "$HOME_ROBOT_IDS" \
+  --home-delay "$HOME_DELAY" \
+  --home-retries "$HOME_RETRIES" \
+  --home-retry-delay "$HOME_RETRY_DELAY"
 
 if [ -n "$SESSION_NAME" ]; then
   set -- "$@" --session-name "$SESSION_NAME"
@@ -81,7 +94,8 @@ if [ "$USE_GRIPPER" = "true" ]; then
     --angler-open-angle "$ANGLER_OPEN_ANGLE" \
     --angler-close-angle "$ANGLER_CLOSE_ANGLE" \
     --slave-open-width "$SLAVE_OPEN_WIDTH" \
-    --slave-close-width "$SLAVE_CLOSE_WIDTH"
+    --slave-close-width "$SLAVE_CLOSE_WIDTH" \
+    --initial-gripper-width "$INITIAL_GRIPPER_WIDTH"
 fi
 
 for interface in $NETWORK_INTERFACES; do

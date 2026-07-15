@@ -75,10 +75,17 @@ def discover_sessions(paths: Sequence[Path]) -> list[Path]:
 
 
 def is_session_dir(path: Path) -> bool:
+    has_new_robot_stream = all(
+        (path / "robot" / name).is_file()
+        for name in ("tcp_pose.npy", "tcp_vel.npy", "q.npy", "timestamps_host_s.npy")
+    )
+    has_legacy_robot_stream = (
+        (path / "tcps.npy").is_file()
+        and (path / "tcps_timestamps_host_s.npy").is_file()
+    )
     return (
         path.is_dir()
-        and (path / "tcps.npy").is_file()
-        and (path / "tcps_timestamps_host_s.npy").is_file()
+        and (has_new_robot_stream or has_legacy_robot_stream)
         and (path / "ext_wrench_in_tcp.npy").is_file()
         and (path / "ext_wrench_in_tcp_timestamps_host_s.npy").is_file()
     )
@@ -161,10 +168,18 @@ def load_session(session_dir: Path, camera_name: str = "") -> SessionData:
     camera_dir = select_camera_dir(session_dir, camera_name)
     color_files = sorted_color_files(camera_dir)
 
-    tcps = np.load(session_dir / "tcps.npy")
+    robot_dir = session_dir / "robot"
+    if (robot_dir / "tcp_pose.npy").is_file():
+        tcp_pose_path = robot_dir / "tcp_pose.npy"
+        robot_timestamps_path = robot_dir / "timestamps_host_s.npy"
+    else:
+        tcp_pose_path = session_dir / "tcps.npy"
+        robot_timestamps_path = session_dir / "tcps_timestamps_host_s.npy"
+
+    tcps = np.load(tcp_pose_path)
     tcp_pose7_wxyz = tcp_xyzw_width_to_pose7_wxyz(tcps)
     robot_timestamps_s = load_timestamps(
-        session_dir / "tcps_timestamps_host_s.npy",
+        robot_timestamps_path,
         tcp_pose7_wxyz.shape[0],
         "robot timestamps",
     )

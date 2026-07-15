@@ -2,8 +2,9 @@
 """
 Dual-arm teleoperation data collection entrypoint.
 
-This script only orchestrates devices and threads. TDK teleoperation lives in
-dual_teleop.py, and data saving utilities live in dual_collect_utils.py.
+This script only orchestrates devices and threads. Transparent TDK
+teleoperation lives in transparent_teleop.py, and data saving utilities live
+in dual_collect_utils.py.
 """
 
 import argparse
@@ -16,6 +17,8 @@ import flexivrdk # this must be imported
 from datetime import datetime
 
 DEFAULT_FPS = 30
+
+from homing import FIXED_INITIAL_GRIPPER_WIDTH
 
 logging.basicConfig(
     level=logging.INFO,
@@ -84,6 +87,21 @@ def parse_args():
     parser.add_argument("--angler-close-angle", type=float, default=16.61, help="Angle when slave gripper should be closed")
     parser.add_argument("--slave-open-width", type=float, default=0.085, help="Slave gripper open width in meters")
     parser.add_argument("--slave-close-width", type=float, default=0.0, help="Slave gripper closed width in meters")
+    parser.add_argument("--initial-gripper-width", type=float, default=FIXED_INITIAL_GRIPPER_WIDTH, help="Slave gripper width used at startup and exit")
+    parser.add_argument(
+        "--home-on-exit",
+        type=parse_bool,
+        default=False,
+        help="Move configured robots back to the fixed initial joint pose when the program exits",
+    )
+    parser.add_argument(
+        "--home-robot-ids",
+        default="1,2",
+        help="Comma-separated robot IDs to home on exit, for example 1,2",
+    )
+    parser.add_argument("--home-delay", type=float, default=0.5, help="Delay before homing on exit")
+    parser.add_argument("--home-retries", type=int, default=3, help="Maximum homing attempts per robot on exit")
+    parser.add_argument("--home-retry-delay", type=float, default=2.0, help="Delay between homing retries")
     args = parser.parse_args()
     if args.fps <= 0:
         parser.error("--fps must be positive")
@@ -93,6 +111,12 @@ def parse_args():
         parser.error("--robot-fps must be positive")
     if args.force_fps is not None and args.force_fps <= 0:
         parser.error("--force-fps must be positive")
+    if args.home_retries <= 0:
+        parser.error("--home-retries must be positive")
+    if args.home_retry_delay < 0:
+        parser.error("--home-retry-delay must be non-negative")
+    if args.initial_gripper_width < 0:
+        parser.error("--initial-gripper-width must be non-negative")
     if args.use_gripper and not args.slave_gripper_id:
         parser.error("--use-gripper true requires --slave-gripper-id")
     if args.use_gripper and args.angler_open_angle == args.angler_close_angle:
@@ -112,6 +136,59 @@ def parse_bool(value):
     raise argparse.ArgumentTypeError("Expected true or false")
 
 
+def parse_home_robot_ids(value):
+    robot_ids = []
+    for raw_id in value.split(","):
+        raw_id = raw_id.strip()
+        if not raw_id:
+            continue
+        robot_id = int(raw_id)
+        if robot_id not in (1, 2):
+            raise ValueError(f"Invalid robot id in --home-robot-ids: {robot_id}")
+        robot_ids.append(robot_id)
+    return robot_ids
+
+
+def home_robots_on_exit(args):
+    if not args.home_on_exit:
+        return True
+    if args.home_delay > 0:
+        time.sleep(args.home_delay)
+
+    from homing import home_robot
+
+    ok = True
+    for robot_id in parse_home_robot_ids(args.home_robot_ids):
+        robot_ok = False
+        for attempt in range(1, args.home_retries + 1):
+            try:
+                logger.info(
+                    "Homing robot %d on exit (attempt %d/%d)",
+                    robot_id,
+                    attempt,
+                    args.home_retries,
+                )
+                home_robot(robot_id)
+                robot_ok = True
+                break
+            except Exception as exc:
+                if attempt >= args.home_retries:
+                    logger.exception("Failed to home robot %d on exit: %s", robot_id, exc)
+                else:
+                    logger.warning(
+                        "Failed to home robot %d on exit attempt %d/%d: %s; retrying in %.1fs",
+                        robot_id,
+                        attempt,
+                        args.home_retries,
+                        exc,
+                        args.home_retry_delay,
+                    )
+                    if args.home_retry_delay > 0:
+                        time.sleep(args.home_retry_delay)
+        ok = ok and robot_ok
+    return ok
+
+
 def build_metadata(args, camera_serials, tdk_tcp_pose_order, saved_tcp_pose_order):
     metadata = vars(args).copy()
     metadata.update(
@@ -122,16 +199,18 @@ def build_metadata(args, camera_serials, tdk_tcp_pose_order, saved_tcp_pose_orde
             "effective_camera_fps": args.camera_fps or args.fps,
             "effective_robot_fps": args.robot_fps or args.fps,
             "effective_force_fps": args.force_fps or args.robot_fps or args.fps,
-            "tcp_pose_source": "CartesianTeleopLAN.robot_states()[1].tcp_pose",
+            "tcp_pose_source": "TransparentCartesianTeleopLAN.robot_states()[1].tcp_pose",
+            "tcp_vel_source": "TransparentCartesianTeleopLAN.robot_states()[1].tcp_vel",
             "ext_wrench_in_tcp_source": (
-                "CartesianTeleopLAN.robot_states()[1].ext_wrench_in_tcp"
+                "TransparentCartesianTeleopLAN.robot_states()[1].ext_wrench_in_tcp"
             ),
             "tdk_tcp_pose_order": tdk_tcp_pose_order,
             "saved_tcp_pose_order": saved_tcp_pose_order,
             "robot_stream_files": {
-                "tcps": "tcps.npy",
-                "angles": "angles.npy",
-                "timestamps": "tcps_timestamps_host_s.npy, angles_timestamps_host_s.npy",
+                "tcp_pose": "robot/tcp_pose.npy",
+                "tcp_vel": "robot/tcp_vel.npy",
+                "q": "robot/q.npy",
+                "timestamps": "robot/timestamps_host_s.npy",
             },
             "force_stream_files": {
                 "ext_wrench_in_tcp": "ext_wrench_in_tcp.npy",
@@ -150,9 +229,19 @@ def build_metadata(args, camera_serials, tdk_tcp_pose_order, saved_tcp_pose_orde
             "slave_gripper_width_source": (
                 "slave_gripper.read()" if args.use_gripper else "constant_zero"
             ),
+            "fixed_initial_gripper_width_m": args.initial_gripper_width,
         }
     )
     return metadata
+
+
+def move_slave_gripper_to_initial_width(args, slave_gripper) -> None:
+    if not args.use_gripper or slave_gripper is None:
+        return
+    logger.info("Moving slave gripper to initial width %.3f m", args.initial_gripper_width)
+    slave_gripper.move(args.initial_gripper_width)
+    if args.gripper_wait_time > 0:
+        time.sleep(args.gripper_wait_time)
 
 
 def sync_gripper(master_gripper, slave_gripper, last_width, eps, wait_time):
@@ -190,11 +279,12 @@ def stop_collection(
         for name, counts in summary["cameras"].items()
     )
     logger.info(
-        "Episode saved: %s | cameras=[%s] | tcps=%d, angles=%d, force=%d",
+        "Episode saved: %s | cameras=[%s] | tcp_pose=%d, tcp_vel=%d, q=%d, force=%d",
         session_dir,
         camera_counts,
-        summary["robot"]["tcps"],
-        summary["robot"]["angles"],
+        summary["robot"]["tcp_pose"],
+        summary["robot"]["tcp_vel"],
+        summary["robot"]["q"],
         summary["force"],
     )
     return summary
@@ -278,7 +368,7 @@ def run_keyboard_loop(
     tty.setcbreak(sys.stdin.fileno())
 
     try:
-        while not teleop_pair.any_fault():
+        while not teleop_pair.any_fault() and not teleop_pair.is_stopped():
             key = _read_key_nonblocking()
             if key == "r" and not activated:
                 teleop_pair.activate(True)
@@ -342,10 +432,10 @@ def run_keyboard_loop(
 def main() -> None:
     args = parse_args()
 
-    from dual_teleop import (
+    from transparent_teleop import (
         SAVED_TCP_POSE_ORDER,
         TDK_TCP_POSE_ORDER,
-        CartesianTeleopPair,
+        TransparentCartesianTeleopPair,
         TeleopSlaveStateReader,
     )
     from dual_collect_utils import (
@@ -355,8 +445,11 @@ def main() -> None:
         init_xense,
     )
 
+    exit_code = 0
+    ready_for_exit_homing = False
+    slave_gripper = None
     try:
-        with CartesianTeleopPair(
+        with TransparentCartesianTeleopPair(
             args.first_sn,
             args.second_sn,
             network_interface_whitelist=args.network_interface,
@@ -376,9 +469,11 @@ def main() -> None:
                     open_width=args.slave_open_width,
                     close_width=args.slave_close_width,
                 )
+                move_slave_gripper_to_initial_width(args, slave_gripper)
 
             cameras = init_cameras(D415_CAMERAS, args.camera_fps or args.fps)
             state_reader = TeleopSlaveStateReader(teleop_pair)
+            ready_for_exit_homing = True
 
             run_keyboard_loop(
                 args,
@@ -397,7 +492,20 @@ def main() -> None:
             )
     except Exception as e:
         logger.error(str(e))
-        sys.exit(1)
+        exit_code = 1
+    finally:
+        if ready_for_exit_homing:
+            try:
+                move_slave_gripper_to_initial_width(args, slave_gripper)
+            except Exception as e:
+                logger.exception("Failed to restore slave gripper initial width on exit: %s", e)
+                exit_code = 1
+            if not home_robots_on_exit(args):
+                exit_code = 1
+        elif args.home_on_exit:
+            logger.info("Skipping exit homing because initialization did not finish")
+
+    sys.exit(exit_code)
 
 
 if __name__ == "__main__":
