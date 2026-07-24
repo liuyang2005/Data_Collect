@@ -66,6 +66,11 @@ class TransparentCartesianTeleopPair:
         with self.lock:
             if not self.started:
                 raise RuntimeError("Transparent teleoperation has not been started")
+            if activated and not self.engaged:
+                leader_state, follower_state = self.cart_teleop.robot_states(self.robot_pair_idx)
+                self.cart_teleop.SetLeaderNullSpacePosture(self.robot_pair_idx, leader_state.q)
+                self.cart_teleop.SetFollowerNullSpacePosture(self.robot_pair_idx, follower_state.q)
+                logger.info("Initialized leader and follower null-space postures from current joints")
             self.cart_teleop.Engage(self.robot_pair_idx, activated)
             self.engaged = activated
 
