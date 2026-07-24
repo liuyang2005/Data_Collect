@@ -17,7 +17,7 @@ FIRST_SN="Rizon4s-063652"
 SECOND_SN="Rizon4s-063586"
 
 # Data collection
-SAVE_ROOT="/home/xense/haptic_exo_teleop_ws/jiaqingke/Data/pick_0713"
+SAVE_ROOT="/home/xense/haptic_exo_teleop_ws/liuyang/Data/pick_0721"
 SESSION_NAME=""
 FPS="30"
 CAMERA_FPS="30"
@@ -37,9 +37,9 @@ ANGLER_GAP="-1"
 ANGLER_STRICT="true"
 ANGLER_OPEN_ANGLE="51.68"
 ANGLER_CLOSE_ANGLE="16.61"
-SLAVE_OPEN_WIDTH="0.08"
+SLAVE_OPEN_WIDTH="0.0"
 SLAVE_CLOSE_WIDTH="0.0"
-INITIAL_GRIPPER_WIDTH="0.08"
+INITIAL_GRIPPER_WIDTH="0.0"
 
 # Optional LAN interface whitelist. Leave empty to let TDK try all interfaces.
 # Multiple addresses can be separated by spaces, for example:
