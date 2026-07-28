@@ -1,6 +1,7 @@
 import importlib
 import sys
 import threading
+import time
 import types
 from pathlib import Path
 
@@ -312,6 +313,255 @@ def test_dual_collect_accepts_independent_stream_fps(monkeypatch):
     assert args.force_fps == 200
 
 
+def test_dual_collect_accepts_single_finger_tactile_settings(monkeypatch):
+    dual_collect = import_dual_collect(monkeypatch)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "dual_collect.py",
+            "-1",
+            "master",
+            "-2",
+            "slave",
+            "--slave-gripper-id",
+            "gripper",
+            "--save-root",
+            "data",
+            "--use-tactile",
+            "true",
+            "--tactile-fps",
+            "60",
+            "--tactile-sensor-sn",
+            "OG001452",
+            "--tactile-mac-addr",
+            "1659f0e0dde0",
+        ],
+    )
+
+    args = dual_collect.parse_args()
+
+    assert args.use_tactile is True
+    assert args.tactile_fps == 60
+    assert args.tactile_sensor_sn == "OG001452"
+    assert args.tactile_mac_addr == "1659f0e0dde0"
+
+
+@pytest.mark.parametrize(
+    "extra_args",
+    [
+        ["--tactile-fps", "0", "--tactile-mac-addr", "1659f0e0dde0"],
+        ["--tactile-fps", "60", "--tactile-mac-addr", ""],
+        [
+            "--tactile-fps",
+            "60",
+            "--tactile-mac-addr",
+            "1659f0e0dde0",
+            "--tactile-sensor-sn",
+            "",
+        ],
+    ],
+)
+def test_dual_collect_rejects_invalid_enabled_tactile_settings(
+    monkeypatch, extra_args
+):
+    dual_collect = import_dual_collect(monkeypatch)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "dual_collect.py",
+            "-1",
+            "master",
+            "-2",
+            "slave",
+            "--slave-gripper-id",
+            "gripper",
+            "--save-root",
+            "data",
+            "--use-tactile",
+            "true",
+            *extra_args,
+        ],
+    )
+
+    with pytest.raises(SystemExit):
+        dual_collect.parse_args()
+
+
+def test_build_metadata_describes_tactile_stream(monkeypatch):
+    dual_collect = import_dual_collect(monkeypatch)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "dual_collect.py",
+            "-1",
+            "master",
+            "-2",
+            "slave",
+            "--slave-gripper-id",
+            "1659f0e0dde0",
+            "--save-root",
+            "data",
+            "--use-tactile",
+            "true",
+            "--tactile-fps",
+            "75",
+            "--tactile-sensor-sn",
+            "OG001452",
+            "--tactile-mac-addr",
+            "1659f0e0dde0",
+        ],
+    )
+    args = dual_collect.parse_args()
+
+    metadata = dual_collect.build_metadata(args, {}, "tdk", "saved")
+
+    assert metadata["effective_tactile_fps"] == 75
+    assert metadata["tactile_source"] == "xensesdk.Sensor.OutputType"
+    assert metadata["tactile_stream_files"] == {
+        "marker_offset": "tactile/marker_offset.npy",
+        "force_torque": "tactile/force_torque.npy",
+        "timestamps": "tactile/timestamps_host_s.npy",
+        "rectify": "tactile/rectify/*.png",
+        "difference": "tactile/difference/*.png",
+        "depth": "tactile/depth/*.png",
+    }
+
+
+def test_start_recording_passes_tactile_reader_and_independent_fps(
+    tmp_path, monkeypatch
+):
+    dual_collect = import_dual_collect(monkeypatch)
+    dcu = import_dual_collect_utils()
+    tactile_reader = object()
+    captured = {}
+
+    class RecordingThread:
+        def __init__(self, *, target, kwargs, daemon):
+            captured["target"] = target
+            captured["kwargs"] = kwargs
+            captured["daemon"] = daemon
+
+        def start(self):
+            captured["started"] = True
+
+    monkeypatch.setattr(dual_collect.threading, "Thread", RecordingThread)
+    monkeypatch.setattr(dual_collect, "build_metadata", lambda *_args: {})
+    monkeypatch.setattr(dcu, "create_session_dirs", lambda *_args, **_kwargs: str(tmp_path))
+    monkeypatch.setattr(dcu, "write_metadata", lambda *_args, **_kwargs: None)
+    args = types.SimpleNamespace(
+        session_name=None,
+        save_root=str(tmp_path),
+        fps=30,
+        use_gripper=False,
+        camera_fps=15,
+        robot_fps=100,
+        force_fps=200,
+        tactile_fps=75,
+    )
+
+    _, _, collect_thread = dual_collect.start_recording(
+        args=args,
+        state_reader=object(),
+        slave_gripper=None,
+        tactile_reader=tactile_reader,
+        cameras={},
+        d415_cameras={},
+        tdk_tcp_pose_order="tdk",
+        saved_tcp_pose_order="saved",
+    )
+
+    assert collect_thread is not None
+    assert captured["started"] is True
+    assert captured["target"] is not dcu.collect_teleop_data
+    assert captured["kwargs"]["worker"] is dcu.collect_teleop_data
+    assert captured["kwargs"]["tactile_reader"] is tactile_reader
+    assert captured["kwargs"]["tactile_fps"] == 75
+
+
+def test_main_connects_passes_and_closes_tactile_reader(monkeypatch):
+    dual_collect = import_dual_collect(monkeypatch)
+    dcu = import_dual_collect_utils()
+    instances = []
+    captured = {}
+
+    class FakeTactileReader:
+        def __init__(self, sensor_serial_number, mac_addr):
+            self.sensor_serial_number = sensor_serial_number
+            self.mac_addr = mac_addr
+            self.connected = False
+            self.closed = False
+            instances.append(self)
+
+        def connect(self):
+            self.connected = True
+
+        def close(self):
+            self.closed = True
+
+    tactile_module = types.ModuleType("xense_tactile")
+    tactile_module.XenseTactileReader = FakeTactileReader
+    monkeypatch.setitem(sys.modules, "xense_tactile", tactile_module)
+
+    class FakeTeleopPair:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+    transparent_module = types.ModuleType("transparent_teleop")
+    transparent_module.SAVED_TCP_POSE_ORDER = "saved"
+    transparent_module.TDK_TCP_POSE_ORDER = "tdk"
+    transparent_module.TransparentCartesianTeleopPair = FakeTeleopPair
+    transparent_module.TeleopSlaveStateReader = lambda pair: ("state", pair)
+    monkeypatch.setitem(sys.modules, "transparent_teleop", transparent_module)
+    monkeypatch.setattr(dcu, "init_cameras", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(
+        dual_collect,
+        "run_keyboard_loop",
+        lambda *args: captured.setdefault("tactile_reader", args[6]),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "dual_collect.py",
+            "-1",
+            "master",
+            "-2",
+            "slave",
+            "--save-root",
+            "data",
+            "--use-gripper",
+            "false",
+            "--use-tactile",
+            "true",
+            "--tactile-sensor-sn",
+            "OG001452",
+            "--tactile-mac-addr",
+            "1659f0e0dde0",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exit_info:
+        dual_collect.main()
+
+    assert exit_info.value.code == 0
+    assert len(instances) == 1
+    reader = instances[0]
+    assert reader.sensor_serial_number == "OG001452"
+    assert reader.mac_addr == "1659f0e0dde0"
+    assert reader.connected is True
+    assert captured["tactile_reader"] is reader
+    assert reader.closed is True
+
+
 def test_read_robot_sample_rejects_invalid_tcp_velocity_shape():
     dcu = import_dual_collect_utils()
 
@@ -596,6 +846,9 @@ def test_stop_collection_waits_for_completion_and_reports_final_counts(
     np.save(robot_dir / "tcp_vel.npy", np.zeros((3, 6)))
     np.save(robot_dir / "q.npy", np.zeros((3, 8)))
     np.save(tmp_path / "ext_wrench_in_tcp.npy", np.zeros((4, 6)))
+    tactile_dir = tmp_path / "tactile"
+    tactile_dir.mkdir()
+    np.save(tactile_dir / "force_torque.npy", np.zeros((2, 6)))
 
     class RecordingThread:
         def __init__(self):
@@ -621,6 +874,7 @@ def test_stop_collection_waits_for_completion_and_reports_final_counts(
         "cameras": {"cam_test": {"color": 2, "depth": 2}},
         "robot": {"tcp_pose": 3, "tcp_vel": 3, "q": 3},
         "force": 4,
+        "tactile": 2,
     }
     assert "Saving episode" in caplog.text
     assert "Episode saved" in caplog.text
@@ -628,12 +882,58 @@ def test_stop_collection_waits_for_completion_and_reports_final_counts(
     assert "tcp_pose=3" in caplog.text
     assert "tcp_vel=3" in caplog.text
     assert "force=4" in caplog.text
+    assert "tactile=2" in caplog.text
 
 
-def test_collect_teleop_data_uses_independent_camera_robot_and_force_fps(
+def test_stop_collection_propagates_background_collection_failure(
+    tmp_path, monkeypatch
+):
+    dual_collect = import_dual_collect(monkeypatch)
+    dcu = import_dual_collect_utils()
+
+    def fail_collection(**_kwargs):
+        raise RuntimeError("background collection failed")
+
+    monkeypatch.setattr(dcu, "collect_teleop_data", fail_collection)
+    monkeypatch.setattr(dual_collect, "build_metadata", lambda *_args: {})
+    monkeypatch.setattr(dcu, "create_session_dirs", lambda *_args, **_kwargs: str(tmp_path))
+    monkeypatch.setattr(dcu, "write_metadata", lambda *_args, **_kwargs: None)
+    args = types.SimpleNamespace(
+        session_name=None,
+        save_root=str(tmp_path),
+        fps=30,
+        use_gripper=False,
+        camera_fps=15,
+        robot_fps=100,
+        force_fps=200,
+        tactile_fps=60,
+    )
+
+    session_dir, stop_event, collect_thread = dual_collect.start_recording(
+        args=args,
+        state_reader=object(),
+        slave_gripper=None,
+        tactile_reader=object(),
+        cameras={},
+        d415_cameras={},
+        tdk_tcp_pose_order="tdk",
+        saved_tcp_pose_order="saved",
+    )
+
+    with pytest.raises(RuntimeError, match="background collection failed"):
+        dual_collect.stop_collection(
+            stop_event,
+            collect_thread,
+            session_dir=session_dir,
+            camera_names=(),
+        )
+
+
+def test_collect_teleop_data_uses_independent_camera_robot_force_and_tactile_fps(
     tmp_path, monkeypatch
 ):
     dcu = import_dual_collect_utils()
+    tactile_module = importlib.import_module("xense_tactile")
     RecordingFastRateControl.rates = []
     monkeypatch.setattr(dcu, "RateControl", RecordingFastRateControl)
 
@@ -653,6 +953,17 @@ def test_collect_teleop_data_uses_independent_camera_robot_and_force_fps(
     stop_event = threading.Event()
     state_reader = FakeStateReader(stop_event)
 
+    class TactileReader:
+        def read_frame(self):
+            time.sleep(0.001)
+            return tactile_module.XenseTactileFrame(
+                marker_offset=np.zeros((1, 2, 2), dtype=np.float32),
+                force_torque=np.zeros(6, dtype=np.float64),
+                rectify=np.zeros((2, 2, 3), dtype=np.uint8),
+                difference=np.zeros((2, 2), dtype=np.uint8),
+                depth=np.zeros((2, 2), dtype=np.uint16),
+            )
+
     dcu.collect_teleop_data(
         state_reader=state_reader,
         slave_gripper=None,
@@ -663,6 +974,8 @@ def test_collect_teleop_data_uses_independent_camera_robot_and_force_fps(
         camera_fps=5,
         robot_fps=20,
         force_fps=80,
+        tactile_reader=TactileReader(),
+        tactile_fps=60,
         use_gripper=False,
         status_period=0,
     )
@@ -670,12 +983,170 @@ def test_collect_teleop_data_uses_independent_camera_robot_and_force_fps(
     assert 5 in RecordingFastRateControl.rates
     assert 20 in RecordingFastRateControl.rates
     assert 80 in RecordingFastRateControl.rates
+    assert 60 in RecordingFastRateControl.rates
     assert np.load(tmp_path / "robot" / "tcp_pose.npy").shape == (3, 8)
     assert np.load(tmp_path / "robot" / "tcp_vel.npy").shape == (3, 6)
     assert np.load(tmp_path / "robot" / "q.npy").shape == (3, 8)
     assert (tmp_path / "ext_wrench_in_tcp.npy").exists()
     assert (tmp_path / "ext_wrench_in_tcp_timestamps_host_s.npy").exists()
     assert (cam_dir / "timestamps_host_s.npy").exists()
+    assert (tmp_path / "tactile" / "force_torque.npy").exists()
+    assert (tmp_path / "tactile" / "timestamps_host_s.npy").exists()
+
+
+def test_collect_tactile_stream_writes_aligned_arrays_and_image_triplets(
+    tmp_path, monkeypatch
+):
+    dcu = import_dual_collect_utils()
+    tactile_module = importlib.import_module("xense_tactile")
+    monkeypatch.setattr(dcu, "RateControl", FastRateControl)
+
+    def fake_imwrite(path, image):
+        Path(path).write_bytes(np.asarray(image).tobytes())
+        return True
+
+    monkeypatch.setitem(sys.modules, "cv2", types.SimpleNamespace(imwrite=fake_imwrite))
+    stop_event = threading.Event()
+
+    class TwoFrameReader:
+        def __init__(self):
+            self.count = 0
+
+        def read_frame(self):
+            self.count += 1
+            value = self.count
+            if self.count == 2:
+                stop_event.set()
+            return tactile_module.XenseTactileFrame(
+                marker_offset=np.full((1, 2, 2), value, dtype=np.float32),
+                force_torque=np.arange(6, dtype=np.float64) + value,
+                rectify=np.full((2, 3, 3), value, dtype=np.uint8),
+                difference=np.full((2, 3), value, dtype=np.uint8),
+                depth=np.full((2, 3), value, dtype=np.uint16),
+            )
+
+    dcu.collect_tactile_stream(
+        tactile_reader=TwoFrameReader(),
+        session_dir=str(tmp_path),
+        stop_event=stop_event,
+        tactile_fps=60,
+        status_period=0,
+    )
+
+    tactile_dir = tmp_path / "tactile"
+    marker = np.load(tactile_dir / "marker_offset.npy")
+    force = np.load(tactile_dir / "force_torque.npy")
+    timestamps = np.load(tactile_dir / "timestamps_host_s.npy")
+    assert marker.shape == (2, 1, 2, 2)
+    assert marker.dtype == np.float32
+    assert force.shape == (2, 6)
+    assert force.dtype == np.float64
+    assert timestamps.shape == (2,)
+    for index in range(2):
+        filename = f"{index:06d}.png"
+        assert (tactile_dir / "rectify" / filename).exists()
+        assert (tactile_dir / "difference" / filename).exists()
+        assert (tactile_dir / "depth" / filename).exists()
+
+
+def test_collect_tactile_stream_discards_incomplete_image_triplet(
+    tmp_path, monkeypatch
+):
+    dcu = import_dual_collect_utils()
+    tactile_module = importlib.import_module("xense_tactile")
+    monkeypatch.setattr(dcu, "RateControl", FastRateControl)
+
+    def fail_mid_triplet(path, image):
+        Path(path).write_bytes(np.asarray(image).tobytes())
+        return "difference" not in Path(path).parts
+
+    monkeypatch.setitem(
+        sys.modules,
+        "cv2",
+        types.SimpleNamespace(imwrite=fail_mid_triplet),
+    )
+    stop_event = threading.Event()
+
+    class OneFrameReader:
+        def read_frame(self):
+            stop_event.set()
+            return tactile_module.XenseTactileFrame(
+                marker_offset=np.ones((1, 2, 2), dtype=np.float32),
+                force_torque=np.arange(6, dtype=np.float64),
+                rectify=np.ones((2, 3, 3), dtype=np.uint8),
+                difference=np.ones((2, 3), dtype=np.uint8),
+                depth=np.ones((2, 3), dtype=np.uint16),
+            )
+
+    with pytest.raises(IOError, match="Failed to write tactile image"):
+        dcu.collect_tactile_stream(
+            tactile_reader=OneFrameReader(),
+            session_dir=str(tmp_path),
+            stop_event=stop_event,
+            tactile_fps=60,
+            status_period=0,
+        )
+
+    tactile_dir = tmp_path / "tactile"
+    assert np.load(tactile_dir / "marker_offset.npy").shape[0] == 0
+    assert np.load(tactile_dir / "force_torque.npy").shape == (0, 6)
+    assert np.load(tactile_dir / "timestamps_host_s.npy").shape == (0,)
+    assert list(tactile_dir.rglob("*.png")) == []
+
+
+def test_collect_tactile_stream_propagates_missing_image_writer_dependency(
+    tmp_path, monkeypatch
+):
+    dcu = import_dual_collect_utils()
+    monkeypatch.setitem(sys.modules, "cv2", None)
+
+    with pytest.raises(ModuleNotFoundError, match="cv2"):
+        dcu.collect_tactile_stream(
+            tactile_reader=object(),
+            session_dir=str(tmp_path),
+            stop_event=threading.Event(),
+            tactile_fps=60,
+            status_period=0,
+        )
+
+
+def test_collect_teleop_data_propagates_tactile_reader_failure(tmp_path):
+    dcu = import_dual_collect_utils()
+    stop_event = threading.Event()
+    tactile_called = threading.Event()
+
+    class FailingTactileReader:
+        def read_frame(self):
+            tactile_called.set()
+            raise RuntimeError("tactile failed")
+
+    class BlockingStateReader:
+        def read_robot_sample(self):
+            assert tactile_called.wait(timeout=1.0)
+            return (
+                np.zeros(3),
+                np.array([0.0, 0.0, 0.0, 1.0]),
+                np.zeros(7),
+                np.zeros(6),
+                np.zeros(6),
+            )
+
+    with pytest.raises(RuntimeError, match="tactile failed"):
+        dcu.collect_teleop_data(
+            state_reader=BlockingStateReader(),
+            slave_gripper=None,
+            cameras={},
+            session_dir=str(tmp_path),
+            stop_event=stop_event,
+            fps=1000,
+            use_gripper=False,
+            status_period=0,
+            tactile_reader=FailingTactileReader(),
+            tactile_fps=60,
+        )
+
+    assert stop_event.is_set()
+    assert (tmp_path / "tactile" / "force_torque.npy").exists()
 
 
 def test_robot_and_force_streams_can_have_different_lengths(tmp_path, monkeypatch):

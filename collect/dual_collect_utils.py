@@ -323,6 +323,9 @@ def summarize_episode(session_dir: str, camera_names: Sequence[str]) -> dict:
         "force": _array_row_count(
             os.path.join(session_dir, "ext_wrench_in_tcp.npy")
         ),
+        "tactile": _array_row_count(
+            os.path.join(session_dir, "tactile", "force_torque.npy")
+        ),
     }
 
 
@@ -365,6 +368,163 @@ def collect_camera_stream(
         writer_thread.join()
 
     save_camera_timestamps(session_dir, camera_timestamps)
+    if writer_errors:
+        raise writer_errors[0]
+
+
+def write_tactile_images(
+    session_dir: str,
+    frame_queue,
+    sentinel,
+    errors,
+    stop_event,
+    image_writer,
+    committed_indices,
+) -> None:
+    tactile_dir = os.path.join(session_dir, "tactile")
+    writer_failed = False
+    while True:
+        item = frame_queue.get()
+        paths = ()
+        try:
+            if item is sentinel:
+                return
+            if writer_failed:
+                continue
+
+            frame_idx, rectify, difference, depth = item
+            filename = f"{frame_idx:06d}.png"
+            images = (
+                ("rectify", rectify),
+                ("difference", difference),
+                ("depth", depth),
+            )
+            paths = [os.path.join(tactile_dir, name, filename) for name, _ in images]
+            for path, (_, image) in zip(paths, images):
+                if not image_writer(path, image):
+                    raise IOError(f"Failed to write tactile image: {path}")
+            committed_indices.append(frame_idx)
+        except BaseException as exc:
+            errors.append(exc)
+            for path in paths:
+                try:
+                    os.remove(path)
+                except FileNotFoundError:
+                    pass
+                except OSError as cleanup_exc:
+                    errors.append(cleanup_exc)
+            stop_event.set()
+            writer_failed = True
+        finally:
+            frame_queue.task_done()
+
+
+def save_tactile_stream(
+    session_dir: str,
+    marker_offset_rows: Sequence[np.ndarray],
+    force_torque_rows: Sequence[np.ndarray],
+    timestamps_host_s: Sequence[float],
+) -> None:
+    tactile_dir = os.path.join(session_dir, "tactile")
+    os.makedirs(tactile_dir, exist_ok=True)
+    marker_offset = np.asarray(marker_offset_rows, dtype=np.float32)
+    force_torque = np.asarray(force_torque_rows, dtype=np.float64)
+    timestamps = np.asarray(timestamps_host_s, dtype=np.float64)
+
+    if marker_offset.size == 0:
+        marker_offset = np.empty((0, 0, 2), dtype=np.float32)
+    if force_torque.size == 0:
+        force_torque = np.empty((0, 6), dtype=np.float64)
+
+    np.save(os.path.join(tactile_dir, "marker_offset.npy"), marker_offset)
+    np.save(os.path.join(tactile_dir, "force_torque.npy"), force_torque)
+    np.save(os.path.join(tactile_dir, "timestamps_host_s.npy"), timestamps)
+
+
+def collect_tactile_stream(
+    tactile_reader,
+    session_dir: str,
+    stop_event,
+    tactile_fps: int,
+    status_period: int = 100,
+    image_queue_size: int = 128,
+) -> None:
+    import cv2
+
+    if image_queue_size <= 0:
+        raise ValueError("tactile image queue size must be positive")
+    tactile_dir = os.path.join(session_dir, "tactile")
+    for name in ("rectify", "difference", "depth"):
+        os.makedirs(os.path.join(tactile_dir, name), exist_ok=True)
+
+    rate_control = RateControl(tactile_fps)
+    marker_offset_rows = []
+    force_torque_rows = []
+    timestamps_host_s = []
+    writer_errors = []
+    committed_indices = []
+    frame_queue = queue.Queue(maxsize=image_queue_size)
+    sentinel = object()
+    writer_thread = threading.Thread(
+        target=write_tactile_images,
+        args=(
+            session_dir,
+            frame_queue,
+            sentinel,
+            writer_errors,
+            stop_event,
+            cv2.imwrite,
+            committed_indices,
+        ),
+        daemon=True,
+    )
+    writer_thread.start()
+    frame_idx = 0
+
+    try:
+        while not stop_event.is_set():
+            actual_rate = rate_control.sleep()
+            frame = tactile_reader.read_frame()
+            sample_time = time.time()
+            marker_offset = frame.marker_offset.copy()
+            force_torque = frame.force_torque.copy()
+            rectify = frame.rectify.copy()
+            difference = frame.difference.copy()
+            depth = frame.depth.copy()
+            marker_offset_rows.append(marker_offset)
+            force_torque_rows.append(force_torque)
+            timestamps_host_s.append(sample_time)
+            try:
+                frame_queue.put_nowait(
+                    (
+                        frame_idx,
+                        rectify,
+                        difference,
+                        depth,
+                    )
+                )
+            except queue.Full as exc:
+                raise RuntimeError("Tactile image writer queue is full") from exc
+
+            if status_period and frame_idx % status_period == 0:
+                print(
+                    f"Tactile rate: {actual_rate:.2f} Hz, "
+                    f"collected frames: {frame_idx}"
+                )
+            frame_idx += 1
+    finally:
+        frame_queue.put(sentinel)
+        writer_thread.join()
+        committed_marker_rows = [marker_offset_rows[i] for i in committed_indices]
+        committed_force_rows = [force_torque_rows[i] for i in committed_indices]
+        committed_timestamps = [timestamps_host_s[i] for i in committed_indices]
+        save_tactile_stream(
+            session_dir=session_dir,
+            marker_offset_rows=committed_marker_rows,
+            force_torque_rows=committed_force_rows,
+            timestamps_host_s=committed_timestamps,
+        )
+
     if writer_errors:
         raise writer_errors[0]
 
@@ -572,10 +732,13 @@ def collect_teleop_data(
     camera_fps: Optional[int] = None,
     robot_fps: Optional[int] = None,
     force_fps: Optional[int] = None,
+    tactile_reader=None,
+    tactile_fps: Optional[int] = None,
 ) -> None:
     effective_camera_fps = camera_fps if camera_fps is not None else fps
     effective_robot_fps = robot_fps if robot_fps is not None else fps
     effective_force_fps = force_fps if force_fps is not None else effective_robot_fps
+    effective_tactile_fps = tactile_fps if tactile_fps is not None else fps
     state_reader_lock = threading.Lock()
     errors = []
 
@@ -637,6 +800,21 @@ def collect_teleop_data(
             daemon=True,
         )
     )
+    if tactile_reader is not None:
+        threads.append(
+            threading.Thread(
+                target=run_worker,
+                args=(
+                    collect_tactile_stream,
+                    tactile_reader,
+                    session_dir,
+                    stop_event,
+                    effective_tactile_fps,
+                    status_period,
+                ),
+                daemon=True,
+            )
+        )
 
     for thread in threads:
         thread.start()

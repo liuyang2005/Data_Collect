@@ -25,6 +25,10 @@ python collect/dual_collect.py \
   -1 <master_robot_sn> \
   -2 <slave_robot_sn> \
   --slave-gripper-id <slave_xense_id> \
+  --use-tactile true \
+  --tactile-fps 60 \
+  --tactile-sensor-sn OG001452 \
+  --tactile-mac-addr <slave_xense_id> \
   --save-root <save_root>
 ```
 
@@ -56,6 +60,7 @@ python collect/dual_collect.py \
 --camera-fps 30
 --robot-fps 100
 --force-fps 200
+--tactile-fps 60
 --session-name record_test
 --network-interface 192.168.2.102
 --gripper-eps 0.0001
@@ -72,6 +77,15 @@ python collect/dual_collect.py \
 - `--camera-fps`：RGBD 相机采集线程频率。
 - `--robot-fps`：从臂 TCP、关节角和夹爪宽度采集线程频率。
 - `--force-fps`：从臂外力估计 `ext_wrench_in_tcp` 采集线程频率。
+- `--tactile-fps`：左指 Xense 触觉采集线程频率；与相机、机器人和腕力线程相互独立。
+
+启用 `--use-tactile true` 时，需要同时提供夹爪 MAC 地址。默认左指序列号为 `OG001452`：
+
+```bash
+--use-tactile true
+--tactile-sensor-sn OG001452
+--tactile-mac-addr 1659f0e0dde0
+```
 
 `--network-interface` 可以重复传入多个 LAN 网卡 IPv4 地址。
 
@@ -95,7 +109,7 @@ python collect/dual_collect.py \
 s 暂停遥操作 -> q 退出程序
 ```
 
-每次按 `c` 都会创建一个新的轨迹目录。当前版本会启动独立采集线程：相机按 `--camera-fps` 采集 RGBD，机器人状态按 `--robot-fps` 保存从臂 TCP、从臂关节角和从端夹爪宽度，力数据按 `--force-fps` 保存外力估计。相机线程只负责取帧并放入队列，PNG 写盘由单独 writer 线程异步完成，避免 `cv2.imwrite()` 直接拖慢取帧。
+每次按 `c` 都会创建一个新的轨迹目录。当前版本会启动独立采集线程：相机按 `--camera-fps` 采集 RGBD，机器人状态按 `--robot-fps` 保存从臂 TCP、从臂关节角和从端夹爪宽度，力数据按 `--force-fps` 保存外力估计，左指触觉按 `--tactile-fps` 采集完整帧。相机和触觉取帧分别使用独立的 PNG writer，避免 `cv2.imwrite()` 直接拖慢采样线程。
 
 ## 数据结构
 
@@ -118,6 +132,13 @@ record_YYYYmmdd_HHMMSS/
     timestamps_host_s.npy
   ext_wrench_in_tcp.npy
   ext_wrench_in_tcp_timestamps_host_s.npy
+  tactile/
+    marker_offset.npy
+    force_torque.npy
+    timestamps_host_s.npy
+    rectify/
+    difference/
+    depth/
   metadata.json
 ```
 
@@ -134,8 +155,12 @@ record_YYYYmmdd_HHMMSS/
 - `robot/timestamps_host_s.npy`：`(T_robot,)`，上述三个 robot 数组共用的主机时间戳，单位秒
 - `ext_wrench_in_tcp.npy`：`(T, 6)`，每行来自从臂 `RobotStates.ext_wrench_in_tcp`
 - `ext_wrench_in_tcp_timestamps_host_s.npy`：`(T_force,)`，力数据采样时的主机时间戳，单位秒
+- `tactile/marker_offset.npy`：`(T_tactile, ...)`，`float32`，左指 marker 点阵相对启动基线的偏移
+- `tactile/force_torque.npy`：`(T_tactile, 6)`，`float64`，左指 `[Fx, Fy, Fz, Tx, Ty, Tz]`，保留 Xense SDK 原始单位
+- `tactile/timestamps_host_s.npy`：`(T_tactile,)`，触觉帧读取后的主机时间戳，单位秒
+- `tactile/{rectify,difference,depth}/*.png`：同一触觉行对应的三类图像，使用六位连续编号
 
-`tcp_pose`、`tcp_vel` 和 `q` 从同一次从臂 `RobotStates` 快照提取，所以三者逐行对应并共享时间戳。多频版本中，`T_camera`、`T_robot` 和 `T_force` 通常不同，不能假设图片帧号、robot 行号与 wrench 行号一一对应；后续 ACP 或 LeRobot 转换脚本应按各自时间戳做最近邻、插值或窗口聚合对齐。
+`tcp_pose`、`tcp_vel` 和 `q` 从同一次从臂 `RobotStates` 快照提取，所以三者逐行对应并共享时间戳。多频版本中，`T_camera`、`T_robot`、`T_force` 和 `T_tactile` 通常不同，不能假设图片帧号、robot 行号、wrench 行号与触觉行号一一对应；后续 ACP 或 LeRobot 转换脚本应按各自时间戳做最近邻、插值或窗口聚合对齐。
 
 ## 主端 Angler 编码器控制夹爪
 

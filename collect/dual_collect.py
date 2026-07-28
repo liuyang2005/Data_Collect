@@ -64,6 +64,28 @@ def parse_args():
         help="Force/wrench collection FPS. Defaults to --robot-fps, then --fps.",
     )
     parser.add_argument(
+        "--use-tactile",
+        type=parse_bool,
+        default=False,
+        help="Whether to collect one Xense fingertip tactile stream",
+    )
+    parser.add_argument(
+        "--tactile-fps",
+        type=int,
+        default=60,
+        help="Independent Xense tactile collection FPS",
+    )
+    parser.add_argument(
+        "--tactile-sensor-sn",
+        default="OG001452",
+        help="Xense fingertip sensor serial number",
+    )
+    parser.add_argument(
+        "--tactile-mac-addr",
+        default=None,
+        help="Xense gripper MAC address used to reach the fingertip sensor",
+    )
+    parser.add_argument(
         "--use-gripper",
         type=parse_bool,
         default=True,
@@ -111,6 +133,14 @@ def parse_args():
         parser.error("--robot-fps must be positive")
     if args.force_fps is not None and args.force_fps <= 0:
         parser.error("--force-fps must be positive")
+    if args.use_tactile and args.tactile_fps <= 0:
+        parser.error("--tactile-fps must be positive")
+    if args.use_tactile and not args.tactile_sensor_sn.strip():
+        parser.error("--use-tactile true requires --tactile-sensor-sn")
+    if args.use_tactile and not (
+        args.tactile_mac_addr and args.tactile_mac_addr.strip()
+    ):
+        parser.error("--use-tactile true requires --tactile-mac-addr")
     if args.home_retries <= 0:
         parser.error("--home-retries must be positive")
     if args.home_retry_delay < 0:
@@ -199,6 +229,7 @@ def build_metadata(args, camera_serials, tdk_tcp_pose_order, saved_tcp_pose_orde
             "effective_camera_fps": args.camera_fps or args.fps,
             "effective_robot_fps": args.robot_fps or args.fps,
             "effective_force_fps": args.force_fps or args.robot_fps or args.fps,
+            "effective_tactile_fps": args.tactile_fps,
             "tcp_pose_source": "TransparentCartesianTeleopLAN.robot_states()[1].tcp_pose",
             "tcp_vel_source": "TransparentCartesianTeleopLAN.robot_states()[1].tcp_vel",
             "ext_wrench_in_tcp_source": (
@@ -220,6 +251,15 @@ def build_metadata(args, camera_serials, tdk_tcp_pose_order, saved_tcp_pose_orde
                 "color": "cam_*/color/*.png",
                 "depth": "cam_*/depth/*.png",
                 "timestamps": "cam_*/timestamps_host_s.npy",
+            },
+            "tactile_source": "xensesdk.Sensor.OutputType",
+            "tactile_stream_files": {
+                "marker_offset": "tactile/marker_offset.npy",
+                "force_torque": "tactile/force_torque.npy",
+                "timestamps": "tactile/timestamps_host_s.npy",
+                "rectify": "tactile/rectify/*.png",
+                "difference": "tactile/difference/*.png",
+                "depth": "tactile/depth/*.png",
             },
             "master_gripper_width_source": (
                 "disabled"
@@ -265,6 +305,9 @@ def stop_collection(
     if collect_thread is not None:
         logger.info("Saving episode: %s", session_dir or "")
         collect_thread.join()
+        collection_result = getattr(collect_thread, "collection_result", None)
+        if collection_result is not None and collection_result["error"] is not None:
+            raise collection_result["error"]
 
     if session_dir is None:
         return None
@@ -279,13 +322,15 @@ def stop_collection(
         for name, counts in summary["cameras"].items()
     )
     logger.info(
-        "Episode saved: %s | cameras=[%s] | tcp_pose=%d, tcp_vel=%d, q=%d, force=%d",
+        "Episode saved: %s | cameras=[%s] | tcp_pose=%d, tcp_vel=%d, "
+        "q=%d, force=%d, tactile=%d",
         session_dir,
         camera_counts,
         summary["robot"]["tcp_pose"],
         summary["robot"]["tcp_vel"],
         summary["robot"]["q"],
         summary["force"],
+        summary["tactile"],
     )
     return summary
 
@@ -294,6 +339,7 @@ def start_recording(
     args,
     state_reader,
     slave_gripper,
+    tactile_reader,
     cameras,
     d415_cameras,
     tdk_tcp_pose_order,
@@ -315,9 +361,20 @@ def start_recording(
     )
 
     stop_event = threading.Event()
+    collection_result = {"error": None}
+
+    def run_collection(collection_result, worker, **kwargs):
+        try:
+            worker(**kwargs)
+        except BaseException as exc:
+            collection_result["error"] = exc
+            stop_event.set()
+
     collect_thread = threading.Thread(
-        target=collect_teleop_data,
+        target=run_collection,
         kwargs={
+            "collection_result": collection_result,
+            "worker": collect_teleop_data,
             "state_reader": state_reader,
             "slave_gripper": slave_gripper,
             "cameras": cameras,
@@ -328,9 +385,12 @@ def start_recording(
             "camera_fps": args.camera_fps,
             "robot_fps": args.robot_fps,
             "force_fps": args.force_fps,
+            "tactile_reader": tactile_reader,
+            "tactile_fps": args.tactile_fps,
         },
         daemon=True,
     )
+    collect_thread.collection_result = collection_result
     collect_thread.start()
     return session_dir, stop_event, collect_thread
 
@@ -342,6 +402,7 @@ def run_keyboard_loop(
     cameras,
     master_gripper,
     slave_gripper,
+    tactile_reader,
     d415_cameras,
     tdk_tcp_pose_order,
     saved_tcp_pose_order,
@@ -369,6 +430,21 @@ def run_keyboard_loop(
 
     try:
         while not teleop_pair.any_fault() and not teleop_pair.is_stopped():
+            if recording and collect_thread is not None and not collect_thread.is_alive():
+                completed_stop_event = stop_event
+                completed_thread = collect_thread
+                completed_session_dir = session_dir
+                recording = False
+                stop_event = None
+                collect_thread = None
+                session_dir = None
+                stop_collection(
+                    completed_stop_event,
+                    completed_thread,
+                    session_dir=completed_session_dir,
+                    camera_names=d415_cameras.keys(),
+                )
+
             key = _read_key_nonblocking()
             if key == "r" and not activated:
                 teleop_pair.activate(True)
@@ -383,6 +459,7 @@ def run_keyboard_loop(
                     args,
                     state_reader,
                     slave_gripper,
+                    tactile_reader,
                     cameras,
                     d415_cameras,
                     tdk_tcp_pose_order,
@@ -391,16 +468,19 @@ def run_keyboard_loop(
                 recording = True
                 logger.info("Recording started: %s", session_dir)
             elif key == "v" and recording:
-                stop_collection(
-                    stop_event,
-                    collect_thread,
-                    session_dir=session_dir,
-                    camera_names=d415_cameras.keys(),
-                )
+                completed_stop_event = stop_event
+                completed_thread = collect_thread
+                completed_session_dir = session_dir
+                recording = False
                 stop_event = None
                 collect_thread = None
                 session_dir = None
-                recording = False
+                stop_collection(
+                    completed_stop_event,
+                    completed_thread,
+                    session_dir=completed_session_dir,
+                    camera_names=d415_cameras.keys(),
+                )
                 logger.info("Recording stopped")
             elif key == "q":
                 logger.info("Quit requested by keyboard")
@@ -444,10 +524,12 @@ def main() -> None:
         init_angler_controller,
         init_xense,
     )
+    from xense_tactile import XenseTactileReader
 
     exit_code = 0
     ready_for_exit_homing = False
     slave_gripper = None
+    tactile_reader = None
     try:
         with TransparentCartesianTeleopPair(
             args.first_sn,
@@ -471,6 +553,13 @@ def main() -> None:
                 )
                 move_slave_gripper_to_initial_width(args, slave_gripper)
 
+            if args.use_tactile:
+                tactile_reader = XenseTactileReader(
+                    sensor_serial_number=args.tactile_sensor_sn,
+                    mac_addr=args.tactile_mac_addr,
+                )
+                tactile_reader.connect()
+
             cameras = init_cameras(D415_CAMERAS, args.camera_fps or args.fps)
             state_reader = TeleopSlaveStateReader(teleop_pair)
             ready_for_exit_homing = True
@@ -482,6 +571,7 @@ def main() -> None:
                 cameras,
                 master_gripper,
                 slave_gripper,
+                tactile_reader,
                 D415_CAMERAS,
                 TDK_TCP_POSE_ORDER,
                 SAVED_TCP_POSE_ORDER,
@@ -494,6 +584,12 @@ def main() -> None:
         logger.error(str(e))
         exit_code = 1
     finally:
+        if tactile_reader is not None:
+            try:
+                tactile_reader.close()
+            except Exception as e:
+                logger.exception("Failed to close Xense tactile sensor: %s", e)
+                exit_code = 1
         if ready_for_exit_homing:
             try:
                 move_slave_gripper_to_initial_width(args, slave_gripper)

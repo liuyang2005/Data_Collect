@@ -29,6 +29,12 @@ FORCE_FPS="200"
 USE_GRIPPER="true"
 SLAVE_GRIPPER_ID="1659f0e0dde0"
 
+# Left-fingertip Xense tactile collection.
+USE_TACTILE="true"
+TACTILE_FPS="60"
+TACTILE_SENSOR_SN="OG001452"
+TACTILE_MAC_ADDR="$SLAVE_GRIPPER_ID"
+
 # Master Angler encoder settings.
 ANGLER_ID="/dev/ttyUSB0"
 ANGLER_INDEX="1"
@@ -69,6 +75,8 @@ set -- \
   --camera-fps "$CAMERA_FPS" \
   --robot-fps "$ROBOT_FPS" \
   --force-fps "$FORCE_FPS" \
+  --use-tactile "$USE_TACTILE" \
+  --tactile-fps "$TACTILE_FPS" \
   --use-gripper "$USE_GRIPPER" \
   --gripper-eps "$GRIPPER_EPS" \
   --gripper-wait-time "$GRIPPER_WAIT_TIME" \
@@ -96,6 +104,12 @@ if [ "$USE_GRIPPER" = "true" ]; then
     --slave-open-width "$SLAVE_OPEN_WIDTH" \
     --slave-close-width "$SLAVE_CLOSE_WIDTH" \
     --initial-gripper-width "$INITIAL_GRIPPER_WIDTH"
+fi
+
+if [ "$USE_TACTILE" = "true" ]; then
+  set -- "$@" \
+    --tactile-sensor-sn "$TACTILE_SENSOR_SN" \
+    --tactile-mac-addr "$TACTILE_MAC_ADDR"
 fi
 
 for interface in $NETWORK_INTERFACES; do
