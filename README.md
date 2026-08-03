@@ -24,11 +24,16 @@ FPS="30"
 CAMERA_FPS="30"
 ROBOT_FPS="100"
 FORCE_FPS="200"
+WRENCH_FEEDBACK_SCALE="0.0"
 USE_GRIPPER="true"
+SLAVE_GRIPPER_ID="d254505bfaaa"
+TACTILE_SENSOR_SN="OG000451"
 HOME_ON_EXIT="true"
 HOME_ROBOT_IDS="1,2"
 INITIAL_GRIPPER_WIDTH="0.08"
 ```
+
+`WRENCH_FEEDBACK_SCALE="0.0"` 保持主臂到从臂的位姿遥操作，但关闭从臂到主臂的 wrench 反馈；设置为 `1.0` 可恢复有力反馈条件。两种条件都会继续采集并保存从臂 `ext_wrench_in_tcp`。
 
 运行后键盘控制：
 

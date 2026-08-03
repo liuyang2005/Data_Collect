@@ -61,6 +61,17 @@ class TransparentCartesianTeleopPair:
             self.cart_teleop.Start()
             self.started = True
 
+    def set_wrench_feedback_scale(self, factor: float) -> None:
+        """Set follower-to-leader wrench feedback scaling for TDK 1.6."""
+        with self.lock:
+            if not self.started:
+                raise RuntimeError("Transparent teleoperation has not been started")
+            self.cart_teleop.SetWrenchFeedbackScalingFactor(
+                self.robot_pair_idx,
+                factor,
+            )
+            logger.info("Wrench feedback scaling factor set to %.1f", factor)
+
     def activate(self, activated: bool) -> None:
         """Engage or disengage leader/follower teleoperation."""
         with self.lock:

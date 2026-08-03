@@ -27,7 +27,7 @@ python collect/dual_collect.py \
   --slave-gripper-id <slave_xense_id> \
   --use-tactile true \
   --tactile-fps 60 \
-  --tactile-sensor-sn OG001452 \
+  --tactile-sensor-sn OG000451 \
   --tactile-mac-addr <slave_xense_id> \
   --save-root <save_root>
 ```
@@ -60,6 +60,7 @@ python collect/dual_collect.py \
 --camera-fps 30
 --robot-fps 100
 --force-fps 200
+--wrench-feedback-scale 0.0
 --tactile-fps 60
 --session-name record_test
 --network-interface 192.168.2.102
@@ -77,14 +78,15 @@ python collect/dual_collect.py \
 - `--camera-fps`：RGBD 相机采集线程频率。
 - `--robot-fps`：从臂 TCP、关节角和夹爪宽度采集线程频率。
 - `--force-fps`：从臂外力估计 `ext_wrench_in_tcp` 采集线程频率。
+- `--wrench-feedback-scale`：TDK 从臂到主臂的 wrench 反馈比例；`0.0` 关闭，`1.0` 开启。关闭反馈不影响位姿遥操作和 wrench 数据采集。
 - `--tactile-fps`：左指 Xense 触觉采集线程频率；与相机、机器人和腕力线程相互独立。
 
-启用 `--use-tactile true` 时，需要同时提供夹爪 MAC 地址。默认左指序列号为 `OG001452`：
+启用 `--use-tactile true` 时，需要同时提供夹爪 MAC 地址。默认左指序列号为 `OG000451`：
 
 ```bash
 --use-tactile true
---tactile-sensor-sn OG001452
---tactile-mac-addr 1659f0e0dde0
+--tactile-sensor-sn OG000451
+--tactile-mac-addr d254505bfaaa
 ```
 
 `--network-interface` 可以重复传入多个 LAN 网卡 IPv4 地址。

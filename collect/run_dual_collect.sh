@@ -24,15 +24,18 @@ CAMERA_FPS="30"
 ROBOT_FPS="100"
 FORCE_FPS="200"
 
+# Follower-to-leader wrench feedback: 0.0 off, 1.0 on.
+WRENCH_FEEDBACK_SCALE="0.0"
+
 # Gripper collection: true or false.
 # Master side uses Angler encoder, slave side uses Xense.
 USE_GRIPPER="true"
-SLAVE_GRIPPER_ID="1659f0e0dde0"
+SLAVE_GRIPPER_ID="d254505bfaaa"
 
 # Left-fingertip Xense tactile collection.
 USE_TACTILE="true"
 TACTILE_FPS="60"
-TACTILE_SENSOR_SN="OG001452"
+TACTILE_SENSOR_SN="OG000451"
 TACTILE_MAC_ADDR="$SLAVE_GRIPPER_ID"
 
 # Master Angler encoder settings.
@@ -75,6 +78,7 @@ set -- \
   --camera-fps "$CAMERA_FPS" \
   --robot-fps "$ROBOT_FPS" \
   --force-fps "$FORCE_FPS" \
+  --wrench-feedback-scale "$WRENCH_FEEDBACK_SCALE" \
   --use-tactile "$USE_TACTILE" \
   --tactile-fps "$TACTILE_FPS" \
   --use-gripper "$USE_GRIPPER" \

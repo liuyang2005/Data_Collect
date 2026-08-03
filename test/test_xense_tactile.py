@@ -69,8 +69,8 @@ def test_reader_connects_configured_sensor_and_returns_complete_frame():
         return sensor
 
     reader = module.XenseTactileReader(
-        sensor_serial_number="OG001452",
-        mac_addr="1659f0e0dde0",
+        sensor_serial_number="OG000451",
+        mac_addr="d254505bfaaa",
         sensor_factory=factory,
         output_types=OutputTypes,
         baseline_duration_s=0.0,
@@ -80,7 +80,7 @@ def test_reader_connects_configured_sensor_and_returns_complete_frame():
     frame = reader.read_frame()
     reader.close()
 
-    assert calls == [("OG001452", "1659f0e0dde0")]
+    assert calls == [("OG000451", "d254505bfaaa")]
     assert reader.baseline_ready is False
     np.testing.assert_array_equal(
         frame.marker_offset,
@@ -114,8 +114,8 @@ def test_reader_uses_median_marker_baseline():
 
     sensor.selectSensorInfo = select_sensor_info
     reader = module.XenseTactileReader(
-        sensor_serial_number="OG001452",
-        mac_addr="1659f0e0dde0",
+        sensor_serial_number="OG000451",
+        mac_addr="d254505bfaaa",
         sensor_factory=lambda *_args, **_kwargs: sensor,
         output_types=OutputTypes,
         baseline_duration_s=3.0 / 60.0,
@@ -136,8 +136,8 @@ def test_reader_rejects_force_resultant_without_six_components():
     sensor = FakeSensor()
     sensor.force_torque = np.arange(5, dtype=np.float64)
     reader = module.XenseTactileReader(
-        sensor_serial_number="OG001452",
-        mac_addr="1659f0e0dde0",
+        sensor_serial_number="OG000451",
+        mac_addr="d254505bfaaa",
         sensor_factory=lambda *_args, **_kwargs: sensor,
         output_types=OutputTypes,
         baseline_duration_s=0.0,
@@ -152,8 +152,8 @@ def test_reader_releases_sensor_when_baseline_is_invalid():
     sensor = FakeSensor()
     sensor.baseline_marker = np.zeros((3,), dtype=np.float32)
     reader = module.XenseTactileReader(
-        sensor_serial_number="OG001452",
-        mac_addr="1659f0e0dde0",
+        sensor_serial_number="OG000451",
+        mac_addr="d254505bfaaa",
         sensor_factory=lambda *_args, **_kwargs: sensor,
         output_types=OutputTypes,
         baseline_duration_s=0.0,

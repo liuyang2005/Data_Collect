@@ -232,11 +232,11 @@ def test_init_xense_uses_r3kit_wrapper_and_nonblocking_mode(monkeypatch):
         types.SimpleNamespace(XenseGripper=UnexpectedXenseGripper),
     )
 
-    gripper = dcu.init_xense("1659f0e0dde0", "slave_xense")
+    gripper = dcu.init_xense("d254505bfaaa", "slave_xense")
 
     assert isinstance(gripper, FakeXense)
     assert calls == {
-        "id": "1659f0e0dde0",
+        "id": "d254505bfaaa",
         "name": "slave_xense",
         "blocking": False,
     }
@@ -280,6 +280,60 @@ def test_dual_collect_keeps_gripper_enabled_by_default(monkeypatch):
     args = dual_collect.parse_args()
 
     assert args.use_gripper is True
+
+
+def test_dual_collect_defaults_to_no_feedback_and_new_left_tactile_sensor(
+    monkeypatch,
+):
+    dual_collect = import_dual_collect(monkeypatch)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "dual_collect.py",
+            "-1",
+            "master",
+            "-2",
+            "slave",
+            "--slave-gripper-id",
+            "d254505bfaaa",
+            "--save-root",
+            "data",
+        ],
+    )
+
+    args = dual_collect.parse_args()
+    metadata = dual_collect.build_metadata(args, {}, "tdk", "saved")
+
+    assert args.wrench_feedback_scale == 0.0
+    assert args.tactile_sensor_sn == "OG000451"
+    assert metadata["wrench_feedback_scale"] == 0.0
+
+
+def test_dual_collect_rejects_non_comparison_feedback_scale(monkeypatch, capsys):
+    dual_collect = import_dual_collect(monkeypatch)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "dual_collect.py",
+            "-1",
+            "master",
+            "-2",
+            "slave",
+            "--slave-gripper-id",
+            "d254505bfaaa",
+            "--save-root",
+            "data",
+            "--wrench-feedback-scale",
+            "0.5",
+        ],
+    )
+
+    with pytest.raises(SystemExit):
+        dual_collect.parse_args()
+
+    assert "invalid choice" in capsys.readouterr().err
 
 
 def test_dual_collect_accepts_independent_stream_fps(monkeypatch):
@@ -333,9 +387,9 @@ def test_dual_collect_accepts_single_finger_tactile_settings(monkeypatch):
             "--tactile-fps",
             "60",
             "--tactile-sensor-sn",
-            "OG001452",
+            "OG000451",
             "--tactile-mac-addr",
-            "1659f0e0dde0",
+            "d254505bfaaa",
         ],
     )
 
@@ -343,20 +397,20 @@ def test_dual_collect_accepts_single_finger_tactile_settings(monkeypatch):
 
     assert args.use_tactile is True
     assert args.tactile_fps == 60
-    assert args.tactile_sensor_sn == "OG001452"
-    assert args.tactile_mac_addr == "1659f0e0dde0"
+    assert args.tactile_sensor_sn == "OG000451"
+    assert args.tactile_mac_addr == "d254505bfaaa"
 
 
 @pytest.mark.parametrize(
     "extra_args",
     [
-        ["--tactile-fps", "0", "--tactile-mac-addr", "1659f0e0dde0"],
+        ["--tactile-fps", "0", "--tactile-mac-addr", "d254505bfaaa"],
         ["--tactile-fps", "60", "--tactile-mac-addr", ""],
         [
             "--tactile-fps",
             "60",
             "--tactile-mac-addr",
-            "1659f0e0dde0",
+            "d254505bfaaa",
             "--tactile-sensor-sn",
             "",
         ],
@@ -401,7 +455,7 @@ def test_build_metadata_describes_tactile_stream(monkeypatch):
             "-2",
             "slave",
             "--slave-gripper-id",
-            "1659f0e0dde0",
+            "d254505bfaaa",
             "--save-root",
             "data",
             "--use-tactile",
@@ -409,9 +463,9 @@ def test_build_metadata_describes_tactile_stream(monkeypatch):
             "--tactile-fps",
             "75",
             "--tactile-sensor-sn",
-            "OG001452",
+            "OG000451",
             "--tactile-mac-addr",
-            "1659f0e0dde0",
+            "d254505bfaaa",
         ],
     )
     args = dual_collect.parse_args()
@@ -507,13 +561,17 @@ def test_main_connects_passes_and_closes_tactile_reader(monkeypatch):
 
     class FakeTeleopPair:
         def __init__(self, *_args, **_kwargs):
-            pass
+            self.wrench_feedback_scale = None
 
         def __enter__(self):
             return self
 
         def __exit__(self, *_args):
             return None
+
+        def set_wrench_feedback_scale(self, factor):
+            self.wrench_feedback_scale = factor
+            captured["wrench_feedback_scale"] = factor
 
     transparent_module = types.ModuleType("transparent_teleop")
     transparent_module.SAVED_TCP_POSE_ORDER = "saved"
@@ -543,9 +601,9 @@ def test_main_connects_passes_and_closes_tactile_reader(monkeypatch):
             "--use-tactile",
             "true",
             "--tactile-sensor-sn",
-            "OG001452",
+            "OG000451",
             "--tactile-mac-addr",
-            "1659f0e0dde0",
+            "d254505bfaaa",
         ],
     )
 
@@ -555,9 +613,10 @@ def test_main_connects_passes_and_closes_tactile_reader(monkeypatch):
     assert exit_info.value.code == 0
     assert len(instances) == 1
     reader = instances[0]
-    assert reader.sensor_serial_number == "OG001452"
-    assert reader.mac_addr == "1659f0e0dde0"
+    assert reader.sensor_serial_number == "OG000451"
+    assert reader.mac_addr == "d254505bfaaa"
     assert reader.connected is True
+    assert captured["wrench_feedback_scale"] == 0.0
     assert captured["tactile_reader"] is reader
     assert reader.closed is True
 

@@ -64,6 +64,13 @@ def parse_args():
         help="Force/wrench collection FPS. Defaults to --robot-fps, then --fps.",
     )
     parser.add_argument(
+        "--wrench-feedback-scale",
+        type=float,
+        choices=(0.0, 1.0),
+        default=0.0,
+        help="Follower-to-leader wrench feedback: 0 disables, 1 enables.",
+    )
+    parser.add_argument(
         "--use-tactile",
         type=parse_bool,
         default=False,
@@ -77,7 +84,7 @@ def parse_args():
     )
     parser.add_argument(
         "--tactile-sensor-sn",
-        default="OG001452",
+        default="OG000451",
         help="Xense fingertip sensor serial number",
     )
     parser.add_argument(
@@ -536,6 +543,7 @@ def main() -> None:
             args.second_sn,
             network_interface_whitelist=args.network_interface,
         ) as teleop_pair:
+            teleop_pair.set_wrench_feedback_scale(args.wrench_feedback_scale)
             master_gripper = None
             slave_gripper = None
             if args.use_gripper:
