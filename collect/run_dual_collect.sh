@@ -24,21 +24,26 @@ CAMERA_FPS="30"
 ROBOT_FPS="100"
 FORCE_FPS="200"
 
-# Follower-to-leader wrench feedback: 0.0 off, 1.0 on.
+# Follower-to-leader wrench feedback, applied when the collector starts.
+# 0.0 disables feedback and 1.0 enables it. Pose teleoperation and saved
+# ext_wrench_in_tcp data remain active in both conditions.
 WRENCH_FEEDBACK_SCALE="0.0"
 
-# Gripper collection: true or false.
 # Master side uses Angler encoder, slave side uses Xense.
+# Hardware IDs are machine-specific and should be checked before each setup.
 USE_GRIPPER="true"
 SLAVE_GRIPPER_ID="d254505bfaaa"
 
 # Left-fingertip Xense tactile collection.
+# The tactile MAC follows the slave gripper; the fingertip serial is independent.
 USE_TACTILE="true"
 TACTILE_FPS="60"
 TACTILE_SENSOR_SN="OG000451"
 TACTILE_MAC_ADDR="$SLAVE_GRIPPER_ID"
 
 # Master Angler encoder settings.
+# OPEN/CLOSE_ANGLE are measured encoder endpoints. They map linearly to the
+# corresponding slave widths in meters, with out-of-range angles clamped.
 ANGLER_ID="/dev/ttyUSB0"
 ANGLER_INDEX="1"
 ANGLER_BAUDRATE="1000000"
@@ -48,6 +53,7 @@ ANGLER_OPEN_ANGLE="51.68"
 ANGLER_CLOSE_ANGLE="16.61"
 SLAVE_OPEN_WIDTH="0.0"
 SLAVE_CLOSE_WIDTH="0.0"
+# Width commanded at collector startup and exit; set it to a safe task pose.
 INITIAL_GRIPPER_WIDTH="0.0"
 
 # Optional LAN interface whitelist. Leave empty to let TDK try all interfaces.
@@ -55,7 +61,7 @@ INITIAL_GRIPPER_WIDTH="0.0"
 # NETWORK_INTERFACES="192.168.2.102 10.42.0.1"
 NETWORK_INTERFACES=""
 
-# Runtime tuning
+# Runtime tuning: EPS suppresses tiny width commands; WAIT_TIME allows motion.
 GRIPPER_EPS="0.0001"
 GRIPPER_WAIT_TIME="0.1"
 NULL_SPACE_PERIOD="0.1"

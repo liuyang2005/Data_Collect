@@ -78,8 +78,10 @@ python collect/dual_collect.py \
 - `--camera-fps`：RGBD 相机采集线程频率。
 - `--robot-fps`：从臂 TCP、关节角和夹爪宽度采集线程频率。
 - `--force-fps`：从臂外力估计 `ext_wrench_in_tcp` 采集线程频率。
-- `--wrench-feedback-scale`：TDK 从臂到主臂的 wrench 反馈比例；`0.0` 关闭，`1.0` 开启。关闭反馈不影响位姿遥操作和 wrench 数据采集。
+- `--wrench-feedback-scale`：TDK 从臂到主臂的 wrench 反馈开关；仅接受 `0.0`（关闭）或 `1.0`（开启）。
 - `--tactile-fps`：左指 Xense 触觉采集线程频率；与相机、机器人和腕力线程相互独立。
+
+`--wrench-feedback-scale` 在程序启动时设置，切换有/无力反馈条件后需要重新启动采集程序。该参数只控制从臂 wrench 是否反馈到主臂，不影响主臂到从臂的位姿遥操作，也不会缩放或关闭 `ext_wrench_in_tcp` 的采集与保存；因此有反馈和无反馈数据仍可使用同一套 wrench 字段进行比较。
 
 启用 `--use-tactile true` 时，需要同时提供夹爪 MAC 地址。默认左指序列号为 `OG000451`：
 
@@ -179,6 +181,7 @@ ANGLER_OPEN_ANGLE="51.68"
 ANGLER_CLOSE_ANGLE="16.61"
 SLAVE_OPEN_WIDTH="0.085"
 SLAVE_CLOSE_WIDTH="0.0"
+INITIAL_GRIPPER_WIDTH="0.0"
 ```
 
 编码器角度会被线性映射为从端夹爪目标宽度：
@@ -187,5 +190,15 @@ SLAVE_CLOSE_WIDTH="0.0"
 ANGLER_CLOSE_ANGLE -> SLAVE_CLOSE_WIDTH
 ANGLER_OPEN_ANGLE  -> SLAVE_OPEN_WIDTH
 ```
+
+其中：
+
+- `SLAVE_GRIPPER_ID` 是当前真机从端 Xense 夹爪的 MAC 地址；触觉采集默认复用该地址作为 `TACTILE_MAC_ADDR`。
+- `ANGLER_OPEN_ANGLE` 和 `ANGLER_CLOSE_ANGLE` 是主端编码器实测的张开/闭合标定端点，不是夹爪宽度。
+- `SLAVE_OPEN_WIDTH` 和 `SLAVE_CLOSE_WIDTH` 是上述两个端点对应的从端目标宽度，单位为米。编码器角度超出标定区间时，映射结果会限制在这两个宽度之间。
+- `INITIAL_GRIPPER_WIDTH` 是程序启动和退出时发送给从端夹爪的目标宽度，单位为米；它独立于开闭端点映射，应按当前任务的安全初始姿态设置。
+- `GRIPPER_EPS` 是相邻目标宽度变化的发送阈值，`GRIPPER_WAIT_TIME` 是夹爪命令后的等待时间。两者用于抑制过密命令并给夹爪留出响应时间。
+
+这些设备 ID、角度和宽度均为真机参数，应在启动采集前按当前夹爪、编码器标定和任务物体尺寸检查；修改 `run_dual_collect.sh` 后重新启动程序即可生效。
 
 从端仍然使用 Xense，采集保存的 `gripper_width` 仍然来自 `slave_gripper.read()`。
