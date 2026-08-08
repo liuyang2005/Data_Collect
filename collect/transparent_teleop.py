@@ -13,6 +13,9 @@ from typing import Optional, Sequence, Tuple
 
 import numpy as np
 
+# RDK must be imported before TDK to avoid duplicate pybind type registration
+# with the SDK versions deployed on the new collection machine.
+import flexivrdk  # noqa: F401
 import flexivtdk
 
 
@@ -42,6 +45,7 @@ class TransparentCartesianTeleopPair:
         second_sn: str,
         robot_pair_idx: int = 0,
         network_interface_whitelist: Optional[Sequence[str]] = None,
+        zero_ft_sensors: bool = True,
     ) -> None:
         self.first_sn = first_sn
         self.second_sn = second_sn
@@ -49,6 +53,9 @@ class TransparentCartesianTeleopPair:
         self.lock = Lock()
         self.started = False
         self.engaged = False
+        self.zero_ft_sensors = bool(zero_ft_sensors)
+        self.leader_robot = None
+        self.follower_robot = None
 
         robot_pairs = [(self.first_sn, self.second_sn)]
         lan_ips = [] if network_interface_whitelist is None else list(network_interface_whitelist)
@@ -57,9 +64,27 @@ class TransparentCartesianTeleopPair:
     def init(self) -> None:
         """Initialize and start the transparent TDK control process."""
         with self.lock:
-            self.cart_teleop.Init()
-            self.cart_teleop.Start()
-            self.started = True
+            zero_mode = (
+                flexivtdk.ZeroFTSensor.Enable
+                if self.zero_ft_sensors
+                else flexivtdk.ZeroFTSensor.Disable
+            )
+            try:
+                self.cart_teleop.Init(True, zero_mode)
+                self.cart_teleop.Start()
+                self.started = True
+                self.leader_robot, self.follower_robot = self.cart_teleop.instances(
+                    self.robot_pair_idx
+                )
+            except BaseException:
+                try:
+                    self.cart_teleop.Stop()
+                except Exception:
+                    pass
+                self.started = False
+                self.leader_robot = None
+                self.follower_robot = None
+                raise
 
     def set_wrench_feedback_scale(self, factor: float) -> None:
         """Set follower-to-leader wrench feedback scaling for TDK 1.6."""
@@ -78,7 +103,10 @@ class TransparentCartesianTeleopPair:
             if not self.started:
                 raise RuntimeError("Transparent teleoperation has not been started")
             if activated and not self.engaged:
-                leader_state, follower_state = self.cart_teleop.robot_states(self.robot_pair_idx)
+                if self.leader_robot is None or self.follower_robot is None:
+                    raise RuntimeError("TDK-owned robot instances are unavailable")
+                leader_state = self.leader_robot.states()
+                follower_state = self.follower_robot.states()
                 self.cart_teleop.SetLeaderNullSpacePosture(self.robot_pair_idx, leader_state.q)
                 self.cart_teleop.SetFollowerNullSpacePosture(self.robot_pair_idx, follower_state.q)
                 logger.info("Initialized leader and follower null-space postures from current joints")
@@ -86,9 +114,11 @@ class TransparentCartesianTeleopPair:
             self.engaged = activated
 
     def read_states(self):
-        """Read leader and follower states in one serialized TDK call."""
+        """Read states from the RDK instances owned by the TDK pair."""
         with self.lock:
-            return self.cart_teleop.robot_states(self.robot_pair_idx)
+            if not self.started or self.leader_robot is None or self.follower_robot is None:
+                raise RuntimeError("Transparent teleoperation has not been started")
+            return self.leader_robot.states(), self.follower_robot.states()
 
     def read_master_state(self):
         return self.read_states()[0]
@@ -155,6 +185,8 @@ class TransparentCartesianTeleopPair:
                     logger.warning("Failed to stop transparent teleop: %s", exc)
                 finally:
                     self.started = False
+                    self.leader_robot = None
+                    self.follower_robot = None
 
     def __enter__(self):
         try:

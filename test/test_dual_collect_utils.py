@@ -192,55 +192,42 @@ def install_fake_pyrealsense2(monkeypatch):
     return state
 
 
-def test_init_xense_uses_r3kit_wrapper_and_nonblocking_mode(monkeypatch):
+def test_init_xense_uses_direct_sdk_and_preserves_legacy_gripper_interface(monkeypatch):
     dcu = import_dual_collect_utils()
     calls = {}
 
-    class FakeXense:
-        def __init__(self, id, name):
-            calls["id"] = id
-            calls["name"] = name
-            self.blocking = None
+    class FakeBackend:
+        def get_gripper_status(self):
+            return {"position": 25.0}
 
-        def block(self, blocking):
-            calls["blocking"] = blocking
-            self.blocking = blocking
+        def set_position(self, position_mm, velocity_mm_s, force_n):
+            calls["set_position"] = (position_mm, velocity_mm_s, force_n)
 
-    class UnexpectedXenseGripper:
+        def release(self):
+            calls["released"] = True
+
+    backend = FakeBackend()
+
+    class FakeXenseGripper:
         @staticmethod
-        def create(*args, **kwargs):
-            raise AssertionError("init_xense should use the r3kit Xense wrapper")
+        def create(*, mac_addr):
+            calls["mac_addr"] = mac_addr
+            return backend
 
-    for module_name in [
-        "r3kit",
-        "r3kit.devices",
-        "r3kit.devices.gripper",
-        "r3kit.devices.gripper.xense",
-    ]:
-        monkeypatch.setitem(sys.modules, module_name, types.ModuleType(module_name))
-
-    r3kit_xense_module = types.ModuleType("r3kit.devices.gripper.xense.xense")
-    r3kit_xense_module.Xense = FakeXense
-    monkeypatch.setitem(
-        sys.modules,
-        "r3kit.devices.gripper.xense.xense",
-        r3kit_xense_module,
-    )
     monkeypatch.setitem(
         sys.modules,
         "xensegripper",
-        types.SimpleNamespace(XenseGripper=UnexpectedXenseGripper),
+        types.SimpleNamespace(XenseGripper=FakeXenseGripper),
     )
 
     gripper = dcu.init_xense("d254505bfaaa", "slave_xense")
 
-    assert isinstance(gripper, FakeXense)
-    assert calls == {
-        "id": "d254505bfaaa",
-        "name": "slave_xense",
-        "blocking": False,
-    }
-    assert gripper.blocking is False
+    assert calls["mac_addr"] == "d254505bfaaa"
+    assert gripper.read() == pytest.approx(0.025)
+    gripper.move(0.04)
+    gripper.close()
+    assert calls["set_position"] == (40.0, 80.0, 20.0)
+    assert calls["released"] is True
 
 
 def test_realsense_d415_matches_r3kit_core_frame_alignment_and_calibration(monkeypatch):
@@ -257,6 +244,53 @@ def test_realsense_d415_matches_r3kit_core_frame_alignment_and_calibration(monke
     np.testing.assert_allclose(camera.depth2color[:3, 3], [0.1, 0.2, 0.3])
     assert color.dtype == np.uint8
     assert depth.dtype == np.uint16
+
+
+def test_realsense_wrapper_accepts_d405_resolution_profile(monkeypatch):
+    dcu = import_dual_collect_utils()
+    install_fake_pyrealsense2(monkeypatch)
+
+    camera = dcu.RealSenseD415(
+        serial="260322274925",
+        fps=30,
+        name="cam_260322274925_wrist",
+        model="D405",
+        width=1280,
+        height=720,
+    )
+
+    assert camera.model == "D405"
+    assert camera.config.streams == [
+        ("depth", 1280, 720, "z16", 30),
+        ("color", 1280, 720, "bgr8", 30),
+    ]
+
+
+def test_init_cameras_closes_open_camera_when_next_profile_fails(monkeypatch):
+    dcu = import_dual_collect_utils()
+    opened = []
+
+    class FakeCamera:
+        def __init__(self, *, serial, **_kwargs):
+            if serial == "bad-camera":
+                raise RuntimeError("camera startup failed")
+            self.closed = False
+            opened.append(self)
+
+        def close(self):
+            self.closed = True
+
+    monkeypatch.setattr(dcu, "RealSenseD415", FakeCamera)
+    profiles = {
+        "cam_good": {"serial": "good-camera"},
+        "cam_bad": {"serial": "bad-camera"},
+    }
+
+    with pytest.raises(RuntimeError, match="camera startup failed"):
+        dcu.init_cameras(profiles, fps=30)
+
+    assert len(opened) == 1
+    assert opened[0].closed is True
 
 
 def test_dual_collect_keeps_gripper_enabled_by_default(monkeypatch):
@@ -308,6 +342,9 @@ def test_dual_collect_defaults_to_no_feedback_and_new_left_tactile_sensor(
     assert args.wrench_feedback_scale == 0.0
     assert args.tactile_sensor_sn == "OG000451"
     assert metadata["wrench_feedback_scale"] == 0.0
+    assert metadata["tcp_pose_source"] == (
+        "TransparentCartesianTeleopLAN.instances(0)[1].states().tcp_pose"
+    )
 
 
 def test_dual_collect_rejects_non_comparison_feedback_scale(monkeypatch, capsys):
@@ -541,6 +578,21 @@ def test_main_connects_passes_and_closes_tactile_reader(monkeypatch):
     instances = []
     captured = {}
 
+    class FakeClosable:
+        def __init__(self):
+            self.closed = False
+            self.moves = []
+
+        def move(self, width):
+            self.moves.append(width)
+
+        def close(self):
+            self.closed = True
+
+    master_gripper = FakeClosable()
+    slave_gripper = FakeClosable()
+    camera = FakeClosable()
+
     class FakeTactileReader:
         def __init__(self, sensor_serial_number, mac_addr):
             self.sensor_serial_number = sensor_serial_number
@@ -579,7 +631,17 @@ def test_main_connects_passes_and_closes_tactile_reader(monkeypatch):
     transparent_module.TransparentCartesianTeleopPair = FakeTeleopPair
     transparent_module.TeleopSlaveStateReader = lambda pair: ("state", pair)
     monkeypatch.setitem(sys.modules, "transparent_teleop", transparent_module)
-    monkeypatch.setattr(dcu, "init_cameras", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(
+        dcu,
+        "init_cameras",
+        lambda *_args, **_kwargs: {"cam_test": camera},
+    )
+    monkeypatch.setattr(dcu, "init_xense", lambda *_args, **_kwargs: slave_gripper)
+    monkeypatch.setattr(
+        dcu,
+        "init_angler_controller",
+        lambda *_args, **_kwargs: master_gripper,
+    )
     monkeypatch.setattr(
         dual_collect,
         "run_keyboard_loop",
@@ -597,7 +659,9 @@ def test_main_connects_passes_and_closes_tactile_reader(monkeypatch):
             "--save-root",
             "data",
             "--use-gripper",
-            "false",
+            "true",
+            "--slave-gripper-id",
+            "d254505bfaaa",
             "--use-tactile",
             "true",
             "--tactile-sensor-sn",
@@ -619,6 +683,10 @@ def test_main_connects_passes_and_closes_tactile_reader(monkeypatch):
     assert captured["wrench_feedback_scale"] == 0.0
     assert captured["tactile_reader"] is reader
     assert reader.closed is True
+    assert len(slave_gripper.moves) == 2
+    assert master_gripper.closed is True
+    assert slave_gripper.closed is True
+    assert camera.closed is True
 
 
 def test_read_robot_sample_rejects_invalid_tcp_velocity_shape():

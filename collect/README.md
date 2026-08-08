@@ -4,6 +4,7 @@
 
 - `dual_collect.py`：数据采集主入口。
 - `transparent_teleop.py`：Flexiv TDK `TransparentCartesianTeleopLAN` 遥操作封装。
+- `gripper_devices.py`：直接使用 `pyserial` 和 `xensegripper` 的 Angler/夹爪兼容层，对采集代码继续提供 `read()/move()/close()`。
 - `dual_teleop.py`：旧版 `CartesianTeleopLAN` 封装，保留作参考。
 - `dual_collect_utils.py`：相机、夹爪、目录创建和多频率数据保存工具，默认采集主视角相机和腕部相机。
 - `homing.py`：固定初始关节角复原脚本。
@@ -14,6 +15,17 @@
 
 ```bash
 sh collect/run_dual_collect.sh
+```
+
+新机器需要安装与当前控制柜匹配的 `flexivrdk`、`flexivtdk`，以及 `pyrealsense2`、`xensesdk`、`xensegripper`、`pyserial` 和 OpenCV。TDK 的 Python 进程还需要实时调度权限；如果环境检查报告缺少 `CAP_SYS_NICE`，按当前 Python 可执行文件路径设置能力后重新登录运行环境。不要对未确认的 Python 路径直接执行 `setcap`。
+
+启动前至少核对：
+
+```bash
+rs-enumerate-devices -s
+ip -4 addr
+ls -l /dev/serial/by-id/
+getcap "$(readlink -f "$(command -v python3)")"
 ```
 
 常用参数可以直接在 `run_dual_collect.sh` 顶部修改。
@@ -91,7 +103,7 @@ python collect/dual_collect.py \
 --tactile-mac-addr d254505bfaaa
 ```
 
-`--network-interface` 可以重复传入多个 LAN 网卡 IPv4 地址。
+`--network-interface` 可以重复传入多个 LAN 网卡 IPv4 地址。当前启动脚本使用新机器的 host 侧地址 `192.168.10.2`，不是机器人本体地址。
 
 `--home-on-exit true` 时，程序在完成初始化并进入键盘控制后退出，会调用 `homing.py` 将指定机械臂复原到固定初始关节角；如果初始化未完成，则不会触发退出复原。
 
@@ -114,6 +126,8 @@ s 暂停遥操作 -> q 退出程序
 ```
 
 每次按 `c` 都会创建一个新的轨迹目录。当前版本会启动独立采集线程：相机按 `--camera-fps` 采集 RGBD，机器人状态按 `--robot-fps` 保存从臂 TCP、从臂关节角和从端夹爪宽度，力数据按 `--force-fps` 保存外力估计，左指触觉按 `--tactile-fps` 采集完整帧。相机和触觉取帧分别使用独立的 PNG writer，避免 `cv2.imwrite()` 直接拖慢采样线程。
+
+主视角继续使用原序列号 `327322062498`，按 D415 的 `640x480@30` profile 初始化；腕部继续使用原序列号 `260322274925`，按 D405 的 `1280x720@30` profile 初始化。序列号是机器相关配置，换线或换机后必须重新核对。目录名和 PNG/时间戳保存格式不变。
 
 ## 数据结构
 
@@ -172,16 +186,16 @@ record_YYYYmmdd_HHMMSS/
 
 ```bash
 USE_GRIPPER="true"
-ANGLER_ID="/dev/ttyUSB0"
+ANGLER_ID="/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0"
 ANGLER_INDEX="1"
 ANGLER_BAUDRATE="1000000"
-ANGLER_GAP="-1"
+ANGLER_GAP="0.002"
 ANGLER_STRICT="true"
-ANGLER_OPEN_ANGLE="51.68"
-ANGLER_CLOSE_ANGLE="16.61"
-SLAVE_OPEN_WIDTH="0.085"
-SLAVE_CLOSE_WIDTH="0.0"
-INITIAL_GRIPPER_WIDTH="0.0"
+ANGLER_OPEN_ANGLE="349.102"
+ANGLER_CLOSE_ANGLE="314.561"
+SLAVE_OPEN_WIDTH="0.075"
+SLAVE_CLOSE_WIDTH="0.001"
+INITIAL_GRIPPER_WIDTH="0.075"
 ```
 
 编码器角度会被线性映射为从端夹爪目标宽度：
@@ -201,4 +215,6 @@ ANGLER_OPEN_ANGLE  -> SLAVE_OPEN_WIDTH
 
 这些设备 ID、角度和宽度均为真机参数，应在启动采集前按当前夹爪、编码器标定和任务物体尺寸检查；修改 `run_dual_collect.sh` 后重新启动程序即可生效。
 
-从端仍然使用 Xense，采集保存的 `gripper_width` 仍然来自 `slave_gripper.read()`。
+从端仍然使用 Xense，采集保存的 `gripper_width` 仍然来自 `slave_gripper.read()`。新版只替换设备访问层：`tcp_pose.npy` 和 `q.npy` 仍各保留第 8 列夹爪宽度，不创建独立 gripper JSONL，也不改变任何旧数据 shape。
+
+程序退出时会先停止当前采集并完成 NPY/时间戳写入，然后关闭触觉、相机、Angler 和 Xense 设备；若启用了 `HOME_ON_EXIT`，还会保留原有的夹爪初始宽度恢复和机械臂 Home 清理。

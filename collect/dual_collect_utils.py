@@ -13,27 +13,53 @@ import numpy as np
 FPS = 30
 MAIN_CAMERA_SERIAL = "327322062498"
 WRIST_CAMERA_SERIAL = "260322274925"
+# Keep these existing serials until the devices on the new machine are checked.
 D415_CAMERAS = {
     f"cam_{MAIN_CAMERA_SERIAL}": MAIN_CAMERA_SERIAL,
     f"cam_{WRIST_CAMERA_SERIAL}_wrist": WRIST_CAMERA_SERIAL,
 }
+CAMERA_PROFILES = {
+    f"cam_{MAIN_CAMERA_SERIAL}": {
+        "serial": MAIN_CAMERA_SERIAL,
+        "model": "D415",
+        "width": 640,
+        "height": 480,
+    },
+    f"cam_{WRIST_CAMERA_SERIAL}_wrist": {
+        "serial": WRIST_CAMERA_SERIAL,
+        "model": "D405",
+        "width": 1280,
+        "height": 720,
+    },
+}
 
 
 def configure_headless_input_backend() -> None:
-    """Allow r3kit/xensesdk imports on SSH sessions without an X display."""
+    """Configure optional input backends on SSH sessions without a display."""
     if not os.environ.get("DISPLAY"):
         os.environ.setdefault("PYNPUT_BACKEND", "dummy")
 
 
 class RealSenseD415:
-    """D415 wrapper with the core behavior used by r3kit's D415 implementation."""
+    """RealSense D415/D405 wrapper preserving the existing collector interface."""
 
-    def __init__(self, serial: str, fps: int = FPS, name: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        serial: str,
+        fps: int = FPS,
+        name: Optional[str] = None,
+        model: str = "D415",
+        width: int = 640,
+        height: int = 480,
+    ) -> None:
         import pyrealsense2 as rs
 
         self.rs = rs
         self.serial = serial
         self.name = name or serial
+        self.model = model
+        self.width = int(width)
+        self.height = int(height)
         self.depth_enabled = True
         self.inpaint = False
         self.hole_filling = None
@@ -41,8 +67,12 @@ class RealSenseD415:
         self.config = rs.config()
         if serial is not None:
             self.config.enable_device(serial)
-        self.config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, fps)
-        self.config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, fps)
+        self.config.enable_stream(
+            rs.stream.depth, self.width, self.height, rs.format.z16, fps
+        )
+        self.config.enable_stream(
+            rs.stream.color, self.width, self.height, rs.format.bgr8, fps
+        )
         self.align = rs.align(rs.stream.color)
         self.pipeline_profile = self.pipeline.start(self.config)
 
@@ -149,49 +179,41 @@ def write_metadata(session_dir: str, metadata: Any) -> str:
 
 
 def init_cameras(
-    d415_cameras: Optional[Mapping[str, str]] = None,
+    d415_cameras: Optional[Mapping[str, Any]] = None,
     fps: int = FPS,
 ) -> Dict[str, RealSenseD415]:
     if d415_cameras is None:
-        d415_cameras = D415_CAMERAS
+        d415_cameras = CAMERA_PROFILES
 
-    return {
-        cam_name: RealSenseD415(serial=serial, fps=fps, name=cam_name)
-        for cam_name, serial in d415_cameras.items()
-    }
+    cameras = {}
+    try:
+        for cam_name, config in d415_cameras.items():
+            if isinstance(config, str):
+                config = {"serial": config}
+            cameras[cam_name] = RealSenseD415(
+                serial=config["serial"],
+                fps=fps,
+                name=cam_name,
+                model=config.get("model", "D415"),
+                width=config.get("width", 640),
+                height=config.get("height", 480),
+            )
+    except BaseException:
+        for camera in reversed(list(cameras.values())):
+            try:
+                camera.close()
+            except Exception:
+                pass
+        raise
+    return cameras
 
 
 def init_xense(gripper_id: str, name: str = "Xense"):
-    configure_headless_input_backend()
-    from r3kit.devices.gripper.xense.xense import Xense
+    from gripper_devices import XenseGripperAdapter
 
-    gripper = Xense(id=gripper_id, name=name)
-    gripper.block(blocking=False)
+    gripper = XenseGripperAdapter(mac_addr=gripper_id, name=name)
+    gripper.open()
     return gripper
-
-
-class AnglerGripperController:
-    def __init__(
-        self,
-        encoder,
-        open_angle: float,
-        close_angle: float,
-        open_width: float,
-        close_width: float,
-    ) -> None:
-        if open_angle == close_angle:
-            raise ValueError("open_angle and close_angle must be different")
-        self.encoder = encoder
-        self.open_angle = float(open_angle)
-        self.close_angle = float(close_angle)
-        self.open_width = float(open_width)
-        self.close_width = float(close_width)
-
-    def read(self) -> float:
-        angle = float(np.asarray(self.encoder.get()["angle"]).reshape(-1)[0])
-        ratio = (angle - self.close_angle) / (self.open_angle - self.close_angle)
-        ratio = float(np.clip(ratio, 0.0, 1.0))
-        return self.close_width + ratio * (self.open_width - self.close_width)
 
 
 def init_angler_controller(
@@ -205,20 +227,19 @@ def init_angler_controller(
     open_width: float,
     close_width: float,
     name: str = "master_angler",
-) -> AnglerGripperController:
-    configure_headless_input_backend()
-    from r3kit.devices.encoder.pdcd.angler import Angler
+) -> Any:
+    from gripper_devices import AnglerGripperController, AnglerSerial
 
-    encoder = Angler(
-        id=encoder_id,
-        index=[index],
+    angler = AnglerSerial(
+        port=encoder_id,
+        encoder_id=index,
         baudrate=baudrate,
-        gap=gap,
-        strict=strict,
-        name=name,
+        inter_request_gap_s=gap if gap >= 0 else 0.002,
+        strict_crc=strict,
     )
+    angler.open()
     return AnglerGripperController(
-        encoder=encoder,
+        angler=angler,
         open_angle=open_angle,
         close_angle=close_angle,
         open_width=open_width,

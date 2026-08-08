@@ -24,6 +24,10 @@ CAMERA_FPS="30"
 ROBOT_FPS="100"
 FORCE_FPS="200"
 
+# Camera serials remain the existing values in dual_collect_utils.py until
+# verified with `rs-enumerate-devices -s` on the collection machine:
+# D415 327322062498 at 640x480, D405 260322274925 at 1280x720.
+
 # Follower-to-leader wrench feedback, applied when the collector starts.
 # 0.0 disables feedback and 1.0 enables it. Pose teleoperation and saved
 # ext_wrench_in_tcp data remain active in both conditions.
@@ -44,22 +48,23 @@ TACTILE_MAC_ADDR="$SLAVE_GRIPPER_ID"
 # Master Angler encoder settings.
 # OPEN/CLOSE_ANGLE are measured encoder endpoints. They map linearly to the
 # corresponding slave widths in meters, with out-of-range angles clamped.
-ANGLER_ID="/dev/ttyUSB0"
+ANGLER_ID="/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0"
 ANGLER_INDEX="1"
 ANGLER_BAUDRATE="1000000"
-ANGLER_GAP="-1"
+ANGLER_GAP="0.002"
 ANGLER_STRICT="true"
-ANGLER_OPEN_ANGLE="51.68"
-ANGLER_CLOSE_ANGLE="16.61"
-SLAVE_OPEN_WIDTH="0.0"
-SLAVE_CLOSE_WIDTH="0.0"
+ANGLER_OPEN_ANGLE="349.102"
+ANGLER_CLOSE_ANGLE="314.561"
+SLAVE_OPEN_WIDTH="0.075"
+SLAVE_CLOSE_WIDTH="0.001"
 # Width commanded at collector startup and exit; set it to a safe task pose.
-INITIAL_GRIPPER_WIDTH="0.0"
+INITIAL_GRIPPER_WIDTH="0.075"
 
 # Optional LAN interface whitelist. Leave empty to let TDK try all interfaces.
 # Multiple addresses can be separated by spaces, for example:
-# NETWORK_INTERFACES="192.168.2.102 10.42.0.1"
-NETWORK_INTERFACES=""
+# Both robots on the current machine share this host-side interface.
+# Verify it with `ip -4 addr` if the NIC configuration changes.
+NETWORK_INTERFACES="192.168.10.2"
 
 # Runtime tuning: EPS suppresses tiny width commands; WAIT_TIME allows motion.
 GRIPPER_EPS="0.0001"

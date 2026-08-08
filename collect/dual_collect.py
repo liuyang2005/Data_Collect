@@ -237,10 +237,15 @@ def build_metadata(args, camera_serials, tdk_tcp_pose_order, saved_tcp_pose_orde
             "effective_robot_fps": args.robot_fps or args.fps,
             "effective_force_fps": args.force_fps or args.robot_fps or args.fps,
             "effective_tactile_fps": args.tactile_fps,
-            "tcp_pose_source": "TransparentCartesianTeleopLAN.robot_states()[1].tcp_pose",
-            "tcp_vel_source": "TransparentCartesianTeleopLAN.robot_states()[1].tcp_vel",
+            "tcp_pose_source": (
+                "TransparentCartesianTeleopLAN.instances(0)[1].states().tcp_pose"
+            ),
+            "tcp_vel_source": (
+                "TransparentCartesianTeleopLAN.instances(0)[1].states().tcp_vel"
+            ),
             "ext_wrench_in_tcp_source": (
-                "TransparentCartesianTeleopLAN.robot_states()[1].ext_wrench_in_tcp"
+                "TransparentCartesianTeleopLAN.instances(0)[1].states()"
+                ".ext_wrench_in_tcp"
             ),
             "tdk_tcp_pose_order": tdk_tcp_pose_order,
             "saved_tcp_pose_order": saved_tcp_pose_order,
@@ -526,6 +531,7 @@ def main() -> None:
         TeleopSlaveStateReader,
     )
     from dual_collect_utils import (
+        CAMERA_PROFILES,
         D415_CAMERAS,
         init_cameras,
         init_angler_controller,
@@ -535,6 +541,8 @@ def main() -> None:
 
     exit_code = 0
     ready_for_exit_homing = False
+    cameras = {}
+    master_gripper = None
     slave_gripper = None
     tactile_reader = None
     try:
@@ -544,8 +552,6 @@ def main() -> None:
             network_interface_whitelist=args.network_interface,
         ) as teleop_pair:
             teleop_pair.set_wrench_feedback_scale(args.wrench_feedback_scale)
-            master_gripper = None
-            slave_gripper = None
             if args.use_gripper:
                 slave_gripper = init_xense(args.slave_gripper_id, "slave_xense")
                 master_gripper = init_angler_controller(
@@ -568,7 +574,7 @@ def main() -> None:
                 )
                 tactile_reader.connect()
 
-            cameras = init_cameras(D415_CAMERAS, args.camera_fps or args.fps)
+            cameras = init_cameras(CAMERA_PROFILES, args.camera_fps or args.fps)
             state_reader = TeleopSlaveStateReader(teleop_pair)
             ready_for_exit_homing = True
 
@@ -598,6 +604,12 @@ def main() -> None:
             except Exception as e:
                 logger.exception("Failed to close Xense tactile sensor: %s", e)
                 exit_code = 1
+        for camera_name, camera in cameras.items():
+            try:
+                camera.close()
+            except Exception as e:
+                logger.exception("Failed to close camera %s: %s", camera_name, e)
+                exit_code = 1
         if ready_for_exit_homing:
             try:
                 move_slave_gripper_to_initial_width(args, slave_gripper)
@@ -608,6 +620,17 @@ def main() -> None:
                 exit_code = 1
         elif args.home_on_exit:
             logger.info("Skipping exit homing because initialization did not finish")
+        for device_name, device in (
+            ("master Angler", master_gripper),
+            ("slave Xense gripper", slave_gripper),
+        ):
+            if device is None:
+                continue
+            try:
+                device.close()
+            except Exception as e:
+                logger.exception("Failed to close %s: %s", device_name, e)
+                exit_code = 1
 
     sys.exit(exit_code)
 
