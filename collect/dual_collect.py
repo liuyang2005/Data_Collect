@@ -83,9 +83,14 @@ def parse_args():
         help="Independent Xense tactile collection FPS",
     )
     parser.add_argument(
-        "--tactile-sensor-sn",
-        default="OG000451",
-        help="Xense fingertip sensor serial number",
+        "--tactile-left-sensor-sn",
+        default="OG001453",
+        help="Left Xense fingertip sensor serial number",
+    )
+    parser.add_argument(
+        "--tactile-right-sensor-sn",
+        default="OG001455",
+        help="Right Xense fingertip sensor serial number",
     )
     parser.add_argument(
         "--tactile-mac-addr",
@@ -142,8 +147,16 @@ def parse_args():
         parser.error("--force-fps must be positive")
     if args.use_tactile and args.tactile_fps <= 0:
         parser.error("--tactile-fps must be positive")
-    if args.use_tactile and not args.tactile_sensor_sn.strip():
-        parser.error("--use-tactile true requires --tactile-sensor-sn")
+    if args.use_tactile and not args.tactile_left_sensor_sn.strip():
+        parser.error("--use-tactile true requires --tactile-left-sensor-sn")
+    if args.use_tactile and not args.tactile_right_sensor_sn.strip():
+        parser.error("--use-tactile true requires --tactile-right-sensor-sn")
+    if (
+        args.use_tactile
+        and args.tactile_left_sensor_sn.strip()
+        == args.tactile_right_sensor_sn.strip()
+    ):
+        parser.error("left and right tactile sensor serial numbers must be different")
     if args.use_tactile and not (
         args.tactile_mac_addr and args.tactile_mac_addr.strip()
     ):
@@ -265,13 +278,29 @@ def build_metadata(args, camera_serials, tdk_tcp_pose_order, saved_tcp_pose_orde
                 "timestamps": "cam_*/timestamps_host_s.npy",
             },
             "tactile_source": "xensesdk.Sensor.OutputType",
+            "tactile_sensor_serials": {
+                "left": args.tactile_left_sensor_sn,
+                "right": args.tactile_right_sensor_sn,
+            },
             "tactile_stream_files": {
-                "marker_offset": "tactile/marker_offset.npy",
-                "force_torque": "tactile/force_torque.npy",
-                "timestamps": "tactile/timestamps_host_s.npy",
-                "rectify": "tactile/rectify/*.png",
-                "difference": "tactile/difference/*.png",
-                "depth": "tactile/depth/*.png",
+                "left": {
+                    "marker_offset": "tactile/left/marker_offset.npy",
+                    "force_torque": "tactile/left/force_torque.npy",
+                    "force_norm": "tactile/left/force_norm.npy",
+                    "timestamps": "tactile/left/timestamps_host_s.npy",
+                    "rectify": "tactile/left/rectify/*.png",
+                    "difference": "tactile/left/difference/*.png",
+                    "depth": "tactile/left/depth/*.png",
+                },
+                "right": {
+                    "marker_offset": "tactile/right/marker_offset.npy",
+                    "force_torque": "tactile/right/force_torque.npy",
+                    "force_norm": "tactile/right/force_norm.npy",
+                    "timestamps": "tactile/right/timestamps_host_s.npy",
+                    "rectify": "tactile/right/rectify/*.png",
+                    "difference": "tactile/right/difference/*.png",
+                    "depth": "tactile/right/depth/*.png",
+                },
             },
             "master_gripper_width_source": (
                 "disabled"
@@ -569,7 +598,8 @@ def main() -> None:
 
             if args.use_tactile:
                 tactile_reader = XenseTactileReader(
-                    sensor_serial_number=args.tactile_sensor_sn,
+                    left_sensor_serial_number=args.tactile_left_sensor_sn,
+                    right_sensor_serial_number=args.tactile_right_sensor_sn,
                     mac_addr=args.tactile_mac_addr,
                 )
                 tactile_reader.connect()

@@ -359,7 +359,8 @@ def test_dual_collect_defaults_to_no_feedback_and_new_left_tactile_sensor(
     metadata = dual_collect.build_metadata(args, {}, "tdk", "saved")
 
     assert args.wrench_feedback_scale == 0.0
-    assert args.tactile_sensor_sn == "OG000451"
+    assert args.tactile_left_sensor_sn == "OG001453"
+    assert args.tactile_right_sensor_sn == "OG001455"
     assert metadata["wrench_feedback_scale"] == 0.0
     assert metadata["tcp_pose_source"] == (
         "TransparentCartesianTeleopLAN.instances(0)[1].states().tcp_pose"
@@ -423,7 +424,7 @@ def test_dual_collect_accepts_independent_stream_fps(monkeypatch):
     assert args.force_fps == 200
 
 
-def test_dual_collect_accepts_single_finger_tactile_settings(monkeypatch):
+def test_dual_collect_accepts_dual_finger_tactile_settings(monkeypatch):
     dual_collect = import_dual_collect(monkeypatch)
     monkeypatch.setattr(
         sys,
@@ -442,10 +443,12 @@ def test_dual_collect_accepts_single_finger_tactile_settings(monkeypatch):
             "true",
             "--tactile-fps",
             "60",
-            "--tactile-sensor-sn",
-            "OG000451",
+            "--tactile-left-sensor-sn",
+            "OG001453",
+            "--tactile-right-sensor-sn",
+            "OG001455",
             "--tactile-mac-addr",
-            "d254505bfaaa",
+            "gripper_8a429d6ea337",
         ],
     )
 
@@ -453,22 +456,41 @@ def test_dual_collect_accepts_single_finger_tactile_settings(monkeypatch):
 
     assert args.use_tactile is True
     assert args.tactile_fps == 60
-    assert args.tactile_sensor_sn == "OG000451"
-    assert args.tactile_mac_addr == "d254505bfaaa"
+    assert args.tactile_left_sensor_sn == "OG001453"
+    assert args.tactile_right_sensor_sn == "OG001455"
+    assert args.tactile_mac_addr == "gripper_8a429d6ea337"
 
 
 @pytest.mark.parametrize(
     "extra_args",
     [
-        ["--tactile-fps", "0", "--tactile-mac-addr", "d254505bfaaa"],
+        ["--tactile-fps", "0", "--tactile-mac-addr", "gripper_8a429d6ea337"],
         ["--tactile-fps", "60", "--tactile-mac-addr", ""],
         [
             "--tactile-fps",
             "60",
             "--tactile-mac-addr",
-            "d254505bfaaa",
-            "--tactile-sensor-sn",
+            "gripper_8a429d6ea337",
+            "--tactile-left-sensor-sn",
             "",
+        ],
+        [
+            "--tactile-fps",
+            "60",
+            "--tactile-mac-addr",
+            "gripper_8a429d6ea337",
+            "--tactile-right-sensor-sn",
+            "",
+        ],
+        [
+            "--tactile-fps",
+            "60",
+            "--tactile-mac-addr",
+            "gripper_8a429d6ea337",
+            "--tactile-left-sensor-sn",
+            "OG001453",
+            "--tactile-right-sensor-sn",
+            "OG001453",
         ],
     ],
 )
@@ -518,10 +540,12 @@ def test_build_metadata_describes_tactile_stream(monkeypatch):
             "true",
             "--tactile-fps",
             "75",
-            "--tactile-sensor-sn",
-            "OG000451",
+            "--tactile-left-sensor-sn",
+            "OG001453",
+            "--tactile-right-sensor-sn",
+            "OG001455",
             "--tactile-mac-addr",
-            "d254505bfaaa",
+            "gripper_8a429d6ea337",
         ],
     )
     args = dual_collect.parse_args()
@@ -530,13 +554,29 @@ def test_build_metadata_describes_tactile_stream(monkeypatch):
 
     assert metadata["effective_tactile_fps"] == 75
     assert metadata["tactile_source"] == "xensesdk.Sensor.OutputType"
+    assert metadata["tactile_sensor_serials"] == {
+        "left": "OG001453",
+        "right": "OG001455",
+    }
     assert metadata["tactile_stream_files"] == {
-        "marker_offset": "tactile/marker_offset.npy",
-        "force_torque": "tactile/force_torque.npy",
-        "timestamps": "tactile/timestamps_host_s.npy",
-        "rectify": "tactile/rectify/*.png",
-        "difference": "tactile/difference/*.png",
-        "depth": "tactile/depth/*.png",
+        "left": {
+            "marker_offset": "tactile/left/marker_offset.npy",
+            "force_torque": "tactile/left/force_torque.npy",
+            "force_norm": "tactile/left/force_norm.npy",
+            "timestamps": "tactile/left/timestamps_host_s.npy",
+            "rectify": "tactile/left/rectify/*.png",
+            "difference": "tactile/left/difference/*.png",
+            "depth": "tactile/left/depth/*.png",
+        },
+        "right": {
+            "marker_offset": "tactile/right/marker_offset.npy",
+            "force_torque": "tactile/right/force_torque.npy",
+            "force_norm": "tactile/right/force_norm.npy",
+            "timestamps": "tactile/right/timestamps_host_s.npy",
+            "rectify": "tactile/right/rectify/*.png",
+            "difference": "tactile/right/difference/*.png",
+            "depth": "tactile/right/depth/*.png",
+        },
     }
 
 
@@ -613,8 +653,14 @@ def test_main_connects_passes_and_closes_tactile_reader(monkeypatch):
     camera = FakeClosable()
 
     class FakeTactileReader:
-        def __init__(self, sensor_serial_number, mac_addr):
-            self.sensor_serial_number = sensor_serial_number
+        def __init__(
+            self,
+            left_sensor_serial_number,
+            right_sensor_serial_number,
+            mac_addr,
+        ):
+            self.left_sensor_serial_number = left_sensor_serial_number
+            self.right_sensor_serial_number = right_sensor_serial_number
             self.mac_addr = mac_addr
             self.connected = False
             self.closed = False
@@ -683,10 +729,12 @@ def test_main_connects_passes_and_closes_tactile_reader(monkeypatch):
             "d254505bfaaa",
             "--use-tactile",
             "true",
-            "--tactile-sensor-sn",
-            "OG000451",
+            "--tactile-left-sensor-sn",
+            "OG001453",
+            "--tactile-right-sensor-sn",
+            "OG001455",
             "--tactile-mac-addr",
-            "d254505bfaaa",
+            "gripper_8a429d6ea337",
         ],
     )
 
@@ -696,8 +744,9 @@ def test_main_connects_passes_and_closes_tactile_reader(monkeypatch):
     assert exit_info.value.code == 0
     assert len(instances) == 1
     reader = instances[0]
-    assert reader.sensor_serial_number == "OG000451"
-    assert reader.mac_addr == "d254505bfaaa"
+    assert reader.left_sensor_serial_number == "OG001453"
+    assert reader.right_sensor_serial_number == "OG001455"
+    assert reader.mac_addr == "gripper_8a429d6ea337"
     assert reader.connected is True
     assert captured["wrench_feedback_scale"] == 0.0
     assert captured["tactile_reader"] is reader
