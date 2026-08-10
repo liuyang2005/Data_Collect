@@ -106,7 +106,7 @@ python collect/dual_collect.py \
 --tactile-mac-addr gripper_8a429d6ea337
 ```
 
-`--network-interface` 可以重复传入多个 LAN 网卡 IPv4 地址。当前启动脚本使用新机器的 host 侧地址 `192.168.10.2`，不是机器人本体地址。
+`--network-interface` 可以重复传入多个 LAN 网卡 IPv4 地址。当前启动脚本使用新机器的 host 侧地址 `192.168.97.10`，不是机器人本体地址。
 
 `--home-after-recording true` 时，按 `v` 完整保存当前轨迹后，程序会先释放 TDK 控制，再调用 `homing.py` 将指定机械臂复原到固定初始关节角。复位成功后只重建 TDK；相机、Angler、从端夹爪和双指触觉保持连接。TDK 不会自动激活，需要再次按 `r`。直接调用 Python 脚本时该选项默认关闭，正式启动脚本默认开启。
 

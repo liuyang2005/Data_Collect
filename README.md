@@ -8,8 +8,8 @@ Flexiv 双臂透明遥操作数据采集工具，用于记录从端机械臂的 
 
 ```bash
 # Robots and output
-FIRST_SN="Rizon4s-063652"
-SECOND_SN="Rizon4s-063586"
+FIRST_SN="Rizon4R-062116"
+SECOND_SN="Rizon4R-062115"
 SAVE_ROOT="/home/xense/haptic_exo_teleop_ws/liuyang/Data/pick_0721"
 SESSION_NAME=""
 
@@ -40,7 +40,7 @@ SLAVE_CLOSE_WIDTH="0.0"
 INITIAL_GRIPPER_WIDTH="0.0"
 
 # Optional LAN whitelist and homing
-NETWORK_INTERFACES=""
+NETWORK_INTERFACES="192.168.97.10"
 HOME_AFTER_RECORDING="true"
 HOME_ON_EXIT="true"
 HOME_ROBOT_IDS="1,2"
@@ -90,7 +90,7 @@ s 暂停遥操作 -> q 退出程序
 主端和从端的固定初始关节角在 `collect/homing.py` 中配置，单位为 degree：
 
 ```python
-FIXED_INITIAL_JOINTS_DEG = [0, -32, 0, 90, 0, 28, 45]
+FIXED_INITIAL_JOINTS_DEG = [0, -32, 0, 90, 0, 28, 0]
 
 CUSTOM_HOME_JOINTS_DEG = {
     1: FIXED_INITIAL_JOINTS_DEG.copy(),

@@ -105,7 +105,7 @@ def test_launcher_selects_no_feedback_and_new_xense_ids():
     assert 'TACTILE_RIGHT_SENSOR_SN="OG001455"' in launcher
     assert '--tactile-left-sensor-sn "$TACTILE_LEFT_SENSOR_SN"' in launcher
     assert '--tactile-right-sensor-sn "$TACTILE_RIGHT_SENSOR_SN"' in launcher
-    assert 'NETWORK_INTERFACES="192.168.10.2"' in launcher
+    assert 'NETWORK_INTERFACES="192.168.97.10"' in launcher
     assert (
         'ANGLER_ID="/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0"'
         in launcher

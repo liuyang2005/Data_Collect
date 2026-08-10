@@ -83,7 +83,11 @@ def test_home_robot_uses_direct_new_rdk_and_preserves_custom_joint_target(monkey
 
     homing.home_robot(1, wait_interval_s=0.0)
 
-    assert calls[0] == ("Robot", "Rizon4s-063652", ["192.168.10.2"])
+    assert calls[0] == (
+        "Robot",
+        homing.ROBOT_CONFIGS[1]["serial"],
+        homing.ROBOT_CONFIGS[1]["local_ips"],
+    )
     assert ("tool.Switch", "tool1") in calls
     move_call = next(call for call in calls if call[0] == "SendJointPosition")
     np.testing.assert_allclose(
