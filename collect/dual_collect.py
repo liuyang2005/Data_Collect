@@ -95,7 +95,7 @@ def parse_args():
     parser.add_argument(
         "--tactile-mac-addr",
         default=None,
-        help="Xense gripper MAC address used to reach the fingertip sensor",
+        help="Shared Xense gripper identifier passed to Sensor.create as mac_addr",
     )
     parser.add_argument(
         "--use-gripper",

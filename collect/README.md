@@ -220,7 +220,7 @@ ANGLER_OPEN_ANGLE  -> SLAVE_OPEN_WIDTH
 
 其中：
 
-- `SLAVE_GRIPPER_ID` 是当前真机从端 Xense 夹爪的 MAC 地址；触觉采集默认复用该地址作为 `TACTILE_MAC_ADDR`。
+- `SLAVE_GRIPPER_ID` 是当前真机从端 Xense 夹爪连接标识；触觉采集默认复用该值作为 `TACTILE_MAC_ADDR`，并传给 Xense SDK 的 `mac_addr` 参数。`TACTILE_MAC_ADDR` 这个变量名为兼容原启动接口而保留。
 - `ANGLER_OPEN_ANGLE` 和 `ANGLER_CLOSE_ANGLE` 是主端编码器实测的张开/闭合标定端点，不是夹爪宽度。
 - `SLAVE_OPEN_WIDTH` 和 `SLAVE_CLOSE_WIDTH` 是上述两个端点对应的从端目标宽度，单位为米。编码器角度超出标定区间时，映射结果会限制在这两个宽度之间。
 - `INITIAL_GRIPPER_WIDTH` 是程序启动和退出时发送给从端夹爪的目标宽度，单位为米；它独立于开闭端点映射，应按当前任务的安全初始姿态设置。

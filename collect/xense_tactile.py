@@ -50,7 +50,7 @@ class XenseTactileReader:
         if left_serial == right_serial:
             raise ValueError("left and right Xense sensor serial numbers must be different")
         if not mac_addr.strip():
-            raise ValueError("Xense MAC address must be non-empty")
+            raise ValueError("Xense connection identifier must be non-empty")
         if baseline_duration_s < 0.0 or baseline_rate_hz <= 0.0:
             raise ValueError("baseline duration must be non-negative and rate positive")
         self.left_sensor_serial_number = left_serial
