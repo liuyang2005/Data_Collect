@@ -100,7 +100,7 @@ def test_launcher_selects_no_feedback_and_new_xense_ids():
 
     assert 'WRENCH_FEEDBACK_SCALE="0.0"' in launcher
     assert '--wrench-feedback-scale "$WRENCH_FEEDBACK_SCALE"' in launcher
-    assert 'SLAVE_GRIPPER_ID="gripper_8a429d6ea337"' in launcher
+    assert 'SLAVE_GRIPPER_ID="8a429d6ea337"' in launcher
     assert 'TACTILE_LEFT_SENSOR_SN="OG001453"' in launcher
     assert 'TACTILE_RIGHT_SENSOR_SN="OG001455"' in launcher
     assert '--tactile-left-sensor-sn "$TACTILE_LEFT_SENSOR_SN"' in launcher

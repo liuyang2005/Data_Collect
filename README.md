@@ -24,7 +24,7 @@ WRENCH_FEEDBACK_SCALE="0.0"
 
 # Slave Xense gripper and dual-fingertip tactile sensors
 USE_GRIPPER="true"
-SLAVE_GRIPPER_ID="gripper_8a429d6ea337"
+SLAVE_GRIPPER_ID="8a429d6ea337"
 USE_TACTILE="true"
 TACTILE_FPS="60"
 TACTILE_LEFT_SENSOR_SN="OG001453"

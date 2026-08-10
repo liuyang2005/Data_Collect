@@ -36,7 +36,7 @@ WRENCH_FEEDBACK_SCALE="0.0"
 # Master side uses Angler encoder, slave side uses Xense.
 # Hardware IDs are machine-specific and should be checked before each setup.
 USE_GRIPPER="true"
-SLAVE_GRIPPER_ID="gripper_8a429d6ea337"
+SLAVE_GRIPPER_ID="8a429d6ea337"
 
 # Dual-fingertip Xense tactile collection.
 # Both tactile sensors use the shared slave-gripper connection identifier.
