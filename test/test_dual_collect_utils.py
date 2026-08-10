@@ -25,6 +25,25 @@ def import_dual_collect(monkeypatch):
     return importlib.import_module("dual_collect")
 
 
+def make_fingertip_frame(tactile_module, value, timestamp_host_s):
+    return tactile_module.XenseFingertipFrame(
+        timestamp_host_s=float(timestamp_host_s),
+        marker_offset=np.full((1, 2, 2), value, dtype=np.float32),
+        force_torque=np.arange(6, dtype=np.float64) + value,
+        force_norm=np.full((2, 3, 3), value, dtype=np.float32),
+        rectify=np.full((2, 3, 3), value, dtype=np.uint8),
+        difference=np.full((2, 3), value, dtype=np.uint8),
+        depth=np.full((2, 3), value, dtype=np.uint16),
+    )
+
+
+def make_dual_tactile_frame(tactile_module, value):
+    return tactile_module.XenseTactileFrame(
+        left=make_fingertip_frame(tactile_module, value, 100.0 + value),
+        right=make_fingertip_frame(tactile_module, value + 10, 200.0 + value),
+    )
+
+
 class FastRateControl:
     def __init__(self, rate_hz):
         self.rate_hz = rate_hz
@@ -973,8 +992,8 @@ def test_stop_collection_waits_for_completion_and_reports_final_counts(
     np.save(robot_dir / "tcp_vel.npy", np.zeros((3, 6)))
     np.save(robot_dir / "q.npy", np.zeros((3, 8)))
     np.save(tmp_path / "ext_wrench_in_tcp.npy", np.zeros((4, 6)))
-    tactile_dir = tmp_path / "tactile"
-    tactile_dir.mkdir()
+    tactile_dir = tmp_path / "tactile" / "left"
+    tactile_dir.mkdir(parents=True)
     np.save(tactile_dir / "force_torque.npy", np.zeros((2, 6)))
 
     class RecordingThread:
@@ -1083,13 +1102,7 @@ def test_collect_teleop_data_uses_independent_camera_robot_force_and_tactile_fps
     class TactileReader:
         def read_frame(self):
             time.sleep(0.001)
-            return tactile_module.XenseTactileFrame(
-                marker_offset=np.zeros((1, 2, 2), dtype=np.float32),
-                force_torque=np.zeros(6, dtype=np.float64),
-                rectify=np.zeros((2, 2, 3), dtype=np.uint8),
-                difference=np.zeros((2, 2), dtype=np.uint8),
-                depth=np.zeros((2, 2), dtype=np.uint16),
-            )
+            return make_dual_tactile_frame(tactile_module, 0)
 
     dcu.collect_teleop_data(
         state_reader=state_reader,
@@ -1117,8 +1130,10 @@ def test_collect_teleop_data_uses_independent_camera_robot_force_and_tactile_fps
     assert (tmp_path / "ext_wrench_in_tcp.npy").exists()
     assert (tmp_path / "ext_wrench_in_tcp_timestamps_host_s.npy").exists()
     assert (cam_dir / "timestamps_host_s.npy").exists()
-    assert (tmp_path / "tactile" / "force_torque.npy").exists()
-    assert (tmp_path / "tactile" / "timestamps_host_s.npy").exists()
+    for side in ("left", "right"):
+        assert (tmp_path / "tactile" / side / "force_torque.npy").exists()
+        assert (tmp_path / "tactile" / side / "force_norm.npy").exists()
+        assert (tmp_path / "tactile" / side / "timestamps_host_s.npy").exists()
 
 
 def test_collect_tactile_stream_writes_aligned_arrays_and_image_triplets(
@@ -1144,13 +1159,7 @@ def test_collect_tactile_stream_writes_aligned_arrays_and_image_triplets(
             value = self.count
             if self.count == 2:
                 stop_event.set()
-            return tactile_module.XenseTactileFrame(
-                marker_offset=np.full((1, 2, 2), value, dtype=np.float32),
-                force_torque=np.arange(6, dtype=np.float64) + value,
-                rectify=np.full((2, 3, 3), value, dtype=np.uint8),
-                difference=np.full((2, 3), value, dtype=np.uint8),
-                depth=np.full((2, 3), value, dtype=np.uint16),
-            )
+            return make_dual_tactile_frame(tactile_module, value)
 
     dcu.collect_tactile_stream(
         tactile_reader=TwoFrameReader(),
@@ -1161,19 +1170,27 @@ def test_collect_tactile_stream_writes_aligned_arrays_and_image_triplets(
     )
 
     tactile_dir = tmp_path / "tactile"
-    marker = np.load(tactile_dir / "marker_offset.npy")
-    force = np.load(tactile_dir / "force_torque.npy")
-    timestamps = np.load(tactile_dir / "timestamps_host_s.npy")
-    assert marker.shape == (2, 1, 2, 2)
-    assert marker.dtype == np.float32
-    assert force.shape == (2, 6)
-    assert force.dtype == np.float64
-    assert timestamps.shape == (2,)
-    for index in range(2):
-        filename = f"{index:06d}.png"
-        assert (tactile_dir / "rectify" / filename).exists()
-        assert (tactile_dir / "difference" / filename).exists()
-        assert (tactile_dir / "depth" / filename).exists()
+    for side, expected_timestamps in (
+        ("left", [101.0, 102.0]),
+        ("right", [201.0, 202.0]),
+    ):
+        side_dir = tactile_dir / side
+        marker = np.load(side_dir / "marker_offset.npy")
+        force = np.load(side_dir / "force_torque.npy")
+        force_norm = np.load(side_dir / "force_norm.npy")
+        timestamps = np.load(side_dir / "timestamps_host_s.npy")
+        assert marker.shape == (2, 1, 2, 2)
+        assert marker.dtype == np.float32
+        assert force.shape == (2, 6)
+        assert force.dtype == np.float64
+        assert force_norm.shape == (2, 2, 3, 3)
+        assert force_norm.dtype == np.float32
+        np.testing.assert_allclose(timestamps, expected_timestamps)
+        for index in range(2):
+            filename = f"{index:06d}.png"
+            assert (side_dir / "rectify" / filename).exists()
+            assert (side_dir / "difference" / filename).exists()
+            assert (side_dir / "depth" / filename).exists()
 
 
 def test_collect_tactile_stream_discards_incomplete_image_triplet(
@@ -1185,7 +1202,8 @@ def test_collect_tactile_stream_discards_incomplete_image_triplet(
 
     def fail_mid_triplet(path, image):
         Path(path).write_bytes(np.asarray(image).tobytes())
-        return "difference" not in Path(path).parts
+        path_parts = Path(path).parts
+        return not ("right" in path_parts and "difference" in path_parts)
 
     monkeypatch.setitem(
         sys.modules,
@@ -1197,13 +1215,7 @@ def test_collect_tactile_stream_discards_incomplete_image_triplet(
     class OneFrameReader:
         def read_frame(self):
             stop_event.set()
-            return tactile_module.XenseTactileFrame(
-                marker_offset=np.ones((1, 2, 2), dtype=np.float32),
-                force_torque=np.arange(6, dtype=np.float64),
-                rectify=np.ones((2, 3, 3), dtype=np.uint8),
-                difference=np.ones((2, 3), dtype=np.uint8),
-                depth=np.ones((2, 3), dtype=np.uint16),
-            )
+            return make_dual_tactile_frame(tactile_module, 1)
 
     with pytest.raises(IOError, match="Failed to write tactile image"):
         dcu.collect_tactile_stream(
@@ -1215,9 +1227,12 @@ def test_collect_tactile_stream_discards_incomplete_image_triplet(
         )
 
     tactile_dir = tmp_path / "tactile"
-    assert np.load(tactile_dir / "marker_offset.npy").shape[0] == 0
-    assert np.load(tactile_dir / "force_torque.npy").shape == (0, 6)
-    assert np.load(tactile_dir / "timestamps_host_s.npy").shape == (0,)
+    for side in ("left", "right"):
+        side_dir = tactile_dir / side
+        assert np.load(side_dir / "marker_offset.npy").shape == (0, 0, 0, 2)
+        assert np.load(side_dir / "force_torque.npy").shape == (0, 6)
+        assert np.load(side_dir / "force_norm.npy").shape == (0, 0, 0, 3)
+        assert np.load(side_dir / "timestamps_host_s.npy").shape == (0,)
     assert list(tactile_dir.rglob("*.png")) == []
 
 
@@ -1273,7 +1288,8 @@ def test_collect_teleop_data_propagates_tactile_reader_failure(tmp_path):
         )
 
     assert stop_event.is_set()
-    assert (tmp_path / "tactile" / "force_torque.npy").exists()
+    for side in ("left", "right"):
+        assert (tmp_path / "tactile" / side / "force_torque.npy").exists()
 
 
 def test_robot_and_force_streams_can_have_different_lengths(tmp_path, monkeypatch):
