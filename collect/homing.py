@@ -26,7 +26,7 @@ def parse_args():
     return parser.parse_args()
 
 
-FIXED_INITIAL_JOINTS_DEG = [0, -32, 0, 90, 0, 28, 45]
+FIXED_INITIAL_JOINTS_DEG = [0, -32, 0, 90, 0, 28, 0]
 FIXED_INITIAL_GRIPPER_WIDTH = 0.08
 
 CUSTOM_HOME_JOINTS_DEG = {
@@ -36,14 +36,14 @@ CUSTOM_HOME_JOINTS_DEG = {
 
 ROBOT_CONFIGS = {
     1: {
-        "serial": "Rizon4s-063652",
+        "serial": "Rizon4R-062116",
         "tool": "tool1",
-        "local_ips": ["192.168.10.2"],
+        "local_ips": ["192.168.97.10"],
     },
     2: {
-        "serial": "Rizon4s-063586",
-        "tool": "hapticexoteleop",
-        "local_ips": ["192.168.10.2"],
+        "serial": "Rizon4R-062115",
+        "tool": "xense",
+        "local_ips": ["192.168.97.10"],
     },
 }
 

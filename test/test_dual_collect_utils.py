@@ -246,23 +246,31 @@ def test_realsense_d415_matches_r3kit_core_frame_alignment_and_calibration(monke
     assert depth.dtype == np.uint16
 
 
-def test_realsense_wrapper_accepts_d405_resolution_profile(monkeypatch):
+def test_default_d405_profile_uses_uniform_640x480_resolution(monkeypatch):
     dcu = import_dual_collect_utils()
     install_fake_pyrealsense2(monkeypatch)
 
+    profile = dcu.CAMERA_PROFILES[f"cam_{dcu.WRIST_CAMERA_SERIAL}_wrist"]
+    assert profile == {
+        "serial": dcu.WRIST_CAMERA_SERIAL,
+        "model": "D405",
+        "width": 640,
+        "height": 480,
+    }
+
     camera = dcu.RealSenseD415(
-        serial="260322274925",
+        serial=profile["serial"],
         fps=30,
-        name="cam_260322274925_wrist",
-        model="D405",
-        width=1280,
-        height=720,
+        name=f"cam_{dcu.WRIST_CAMERA_SERIAL}_wrist",
+        model=profile["model"],
+        width=profile["width"],
+        height=profile["height"],
     )
 
     assert camera.model == "D405"
     assert camera.config.streams == [
-        ("depth", 1280, 720, "z16", 30),
-        ("color", 1280, 720, "bgr8", 30),
+        ("depth", 640, 480, "z16", 30),
+        ("color", 640, 480, "bgr8", 30),
     ]
 
 

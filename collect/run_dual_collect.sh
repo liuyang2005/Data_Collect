@@ -13,20 +13,19 @@
 PYTHON_BIN="python3"
 
 # Robot serial numbers
-FIRST_SN="Rizon4s-063652"
-SECOND_SN="Rizon4s-063586"
+FIRST_SN="Rizon4R-062116"
+SECOND_SN="Rizon4R-062115"
 
 # Data collection
-SAVE_ROOT="/home/xense/haptic_exo_teleop_ws/liuyang/Data/pick_0721"
+SAVE_ROOT="/home/xense/haptic_exo_teleop_ws/Data/smoke_0810"
 SESSION_NAME=""
 FPS="30"
 CAMERA_FPS="30"
 ROBOT_FPS="100"
 FORCE_FPS="200"
 
-# Camera serials remain the existing values in dual_collect_utils.py until
-# verified with `rs-enumerate-devices -s` on the collection machine:
-# D415 327322062498 at 640x480, D405 260322274925 at 1280x720.
+# Camera profiles configured in dual_collect_utils.py and verified on this machine:
+# D415 104122061018 and D405 260322275475, both at 640x480.
 
 # Follower-to-leader wrench feedback, applied when the collector starts.
 # 0.0 disables feedback and 1.0 enables it. Pose teleoperation and saved
@@ -36,13 +35,13 @@ WRENCH_FEEDBACK_SCALE="0.0"
 # Master side uses Angler encoder, slave side uses Xense.
 # Hardware IDs are machine-specific and should be checked before each setup.
 USE_GRIPPER="true"
-SLAVE_GRIPPER_ID="d254505bfaaa"
+SLAVE_GRIPPER_ID="8a429d6ea337"
 
 # Left-fingertip Xense tactile collection.
 # The tactile MAC follows the slave gripper; the fingertip serial is independent.
 USE_TACTILE="true"
 TACTILE_FPS="60"
-TACTILE_SENSOR_SN="OG000451"
+TACTILE_SENSOR_SN="OG001453"
 TACTILE_MAC_ADDR="$SLAVE_GRIPPER_ID"
 
 # Master Angler encoder settings.
@@ -64,7 +63,7 @@ INITIAL_GRIPPER_WIDTH="0.075"
 # Multiple addresses can be separated by spaces, for example:
 # Both robots on the current machine share this host-side interface.
 # Verify it with `ip -4 addr` if the NIC configuration changes.
-NETWORK_INTERFACES="192.168.10.2"
+NETWORK_INTERFACES="192.168.97.10"
 
 # Runtime tuning: EPS suppresses tiny width commands; WAIT_TIME allows motion.
 GRIPPER_EPS="0.0001"
