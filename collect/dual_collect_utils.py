@@ -345,7 +345,7 @@ def summarize_episode(session_dir: str, camera_names: Sequence[str]) -> dict:
             os.path.join(session_dir, "ext_wrench_in_tcp.npy")
         ),
         "tactile": _array_row_count(
-            os.path.join(session_dir, "tactile", "force_torque.npy")
+            os.path.join(session_dir, "tactile", "left", "force_torque.npy")
         ),
     }
 
@@ -413,15 +413,22 @@ def write_tactile_images(
             if writer_failed:
                 continue
 
-            frame_idx, rectify, difference, depth = item
+            frame_idx, left, right = item
             filename = f"{frame_idx:06d}.png"
-            images = (
-                ("rectify", rectify),
-                ("difference", difference),
-                ("depth", depth),
-            )
-            paths = [os.path.join(tactile_dir, name, filename) for name, _ in images]
-            for path, (_, image) in zip(paths, images):
+            images = []
+            for side, frame in (("left", left), ("right", right)):
+                images.extend(
+                    (
+                        (side, "rectify", frame.rectify),
+                        (side, "difference", frame.difference),
+                        (side, "depth", frame.depth),
+                    )
+                )
+            paths = [
+                os.path.join(tactile_dir, side, name, filename)
+                for side, name, _ in images
+            ]
+            for path, (_, _, image) in zip(paths, images):
                 if not image_writer(path, image):
                     raise IOError(f"Failed to write tactile image: {path}")
             committed_indices.append(frame_idx)
@@ -442,23 +449,31 @@ def write_tactile_images(
 
 def save_tactile_stream(
     session_dir: str,
+    side: str,
     marker_offset_rows: Sequence[np.ndarray],
     force_torque_rows: Sequence[np.ndarray],
+    force_norm_rows: Sequence[np.ndarray],
     timestamps_host_s: Sequence[float],
 ) -> None:
-    tactile_dir = os.path.join(session_dir, "tactile")
+    if side not in ("left", "right"):
+        raise ValueError(f"invalid tactile side: {side}")
+    tactile_dir = os.path.join(session_dir, "tactile", side)
     os.makedirs(tactile_dir, exist_ok=True)
     marker_offset = np.asarray(marker_offset_rows, dtype=np.float32)
     force_torque = np.asarray(force_torque_rows, dtype=np.float64)
+    force_norm = np.asarray(force_norm_rows)
     timestamps = np.asarray(timestamps_host_s, dtype=np.float64)
 
     if marker_offset.size == 0:
-        marker_offset = np.empty((0, 0, 2), dtype=np.float32)
+        marker_offset = np.empty((0, 0, 0, 2), dtype=np.float32)
     if force_torque.size == 0:
         force_torque = np.empty((0, 6), dtype=np.float64)
+    if force_norm.size == 0:
+        force_norm = np.empty((0, 0, 0, 3), dtype=np.float32)
 
     np.save(os.path.join(tactile_dir, "marker_offset.npy"), marker_offset)
     np.save(os.path.join(tactile_dir, "force_torque.npy"), force_torque)
+    np.save(os.path.join(tactile_dir, "force_norm.npy"), force_norm)
     np.save(os.path.join(tactile_dir, "timestamps_host_s.npy"), timestamps)
 
 
@@ -475,13 +490,20 @@ def collect_tactile_stream(
     if image_queue_size <= 0:
         raise ValueError("tactile image queue size must be positive")
     tactile_dir = os.path.join(session_dir, "tactile")
-    for name in ("rectify", "difference", "depth"):
-        os.makedirs(os.path.join(tactile_dir, name), exist_ok=True)
+    for side in ("left", "right"):
+        for name in ("rectify", "difference", "depth"):
+            os.makedirs(os.path.join(tactile_dir, side, name), exist_ok=True)
 
     rate_control = RateControl(tactile_fps)
-    marker_offset_rows = []
-    force_torque_rows = []
-    timestamps_host_s = []
+    rows = {
+        side: {
+            "marker_offset": [],
+            "force_torque": [],
+            "force_norm": [],
+            "timestamps_host_s": [],
+        }
+        for side in ("left", "right")
+    }
     writer_errors = []
     committed_indices = []
     frame_queue = queue.Queue(maxsize=image_queue_size)
@@ -506,24 +528,15 @@ def collect_tactile_stream(
         while not stop_event.is_set():
             actual_rate = rate_control.sleep()
             frame = tactile_reader.read_frame()
-            sample_time = time.time()
-            marker_offset = frame.marker_offset.copy()
-            force_torque = frame.force_torque.copy()
-            rectify = frame.rectify.copy()
-            difference = frame.difference.copy()
-            depth = frame.depth.copy()
-            marker_offset_rows.append(marker_offset)
-            force_torque_rows.append(force_torque)
-            timestamps_host_s.append(sample_time)
-            try:
-                frame_queue.put_nowait(
-                    (
-                        frame_idx,
-                        rectify,
-                        difference,
-                        depth,
-                    )
+            for side, fingertip in (("left", frame.left), ("right", frame.right)):
+                rows[side]["marker_offset"].append(fingertip.marker_offset.copy())
+                rows[side]["force_torque"].append(fingertip.force_torque.copy())
+                rows[side]["force_norm"].append(fingertip.force_norm.copy())
+                rows[side]["timestamps_host_s"].append(
+                    float(fingertip.timestamp_host_s)
                 )
+            try:
+                frame_queue.put_nowait((frame_idx, frame.left, frame.right))
             except queue.Full as exc:
                 raise RuntimeError("Tactile image writer queue is full") from exc
 
@@ -536,15 +549,24 @@ def collect_tactile_stream(
     finally:
         frame_queue.put(sentinel)
         writer_thread.join()
-        committed_marker_rows = [marker_offset_rows[i] for i in committed_indices]
-        committed_force_rows = [force_torque_rows[i] for i in committed_indices]
-        committed_timestamps = [timestamps_host_s[i] for i in committed_indices]
-        save_tactile_stream(
-            session_dir=session_dir,
-            marker_offset_rows=committed_marker_rows,
-            force_torque_rows=committed_force_rows,
-            timestamps_host_s=committed_timestamps,
-        )
+        for side in ("left", "right"):
+            side_rows = rows[side]
+            save_tactile_stream(
+                session_dir=session_dir,
+                side=side,
+                marker_offset_rows=[
+                    side_rows["marker_offset"][i] for i in committed_indices
+                ],
+                force_torque_rows=[
+                    side_rows["force_torque"][i] for i in committed_indices
+                ],
+                force_norm_rows=[
+                    side_rows["force_norm"][i] for i in committed_indices
+                ],
+                timestamps_host_s=[
+                    side_rows["timestamps_host_s"][i] for i in committed_indices
+                ],
+            )
 
     if writer_errors:
         raise writer_errors[0]

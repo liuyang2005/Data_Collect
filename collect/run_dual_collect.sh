@@ -37,11 +37,12 @@ WRENCH_FEEDBACK_SCALE="0.0"
 USE_GRIPPER="true"
 SLAVE_GRIPPER_ID="8a429d6ea337"
 
-# Left-fingertip Xense tactile collection.
-# The tactile MAC follows the slave gripper; the fingertip serial is independent.
+# Dual-fingertip Xense tactile collection.
+# Both tactile sensors use the shared slave-gripper connection identifier.
 USE_TACTILE="true"
 TACTILE_FPS="60"
-TACTILE_SENSOR_SN="OG001453"
+TACTILE_LEFT_SENSOR_SN="OG001453"
+TACTILE_RIGHT_SENSOR_SN="OG001455"
 TACTILE_MAC_ADDR="$SLAVE_GRIPPER_ID"
 
 # Master Angler encoder settings.
@@ -122,7 +123,8 @@ fi
 
 if [ "$USE_TACTILE" = "true" ]; then
   set -- "$@" \
-    --tactile-sensor-sn "$TACTILE_SENSOR_SN" \
+    --tactile-left-sensor-sn "$TACTILE_LEFT_SENSOR_SN" \
+    --tactile-right-sensor-sn "$TACTILE_RIGHT_SENSOR_SN" \
     --tactile-mac-addr "$TACTILE_MAC_ADDR"
 fi
 

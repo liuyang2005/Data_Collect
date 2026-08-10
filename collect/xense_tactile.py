@@ -11,20 +11,29 @@ SensorFactory = Callable[..., Any]
 
 
 @dataclass(frozen=True)
-class XenseTactileFrame:
+class XenseFingertipFrame:
+    timestamp_host_s: float
     marker_offset: np.ndarray
     force_torque: np.ndarray
+    force_norm: np.ndarray
     rectify: np.ndarray
     difference: np.ndarray
     depth: np.ndarray
 
 
+@dataclass(frozen=True)
+class XenseTactileFrame:
+    left: XenseFingertipFrame
+    right: XenseFingertipFrame
+
+
 class XenseTactileReader:
-    """Read complete tactile frames from one Xense fingertip sensor."""
+    """Read complete tactile frames from two Xense fingertip sensors."""
 
     def __init__(
         self,
-        sensor_serial_number: str,
+        left_sensor_serial_number: str,
+        right_sensor_serial_number: str,
         mac_addr: str,
         *,
         sensor_factory: SensorFactory | None = None,
@@ -32,28 +41,46 @@ class XenseTactileReader:
         baseline_duration_s: float = 1.0,
         baseline_rate_hz: float = 60.0,
     ) -> None:
-        if not sensor_serial_number.strip():
-            raise ValueError("Xense sensor serial number must be non-empty")
+        left_serial = left_sensor_serial_number.strip()
+        right_serial = right_sensor_serial_number.strip()
+        if not left_serial:
+            raise ValueError("left Xense sensor serial number must be non-empty")
+        if not right_serial:
+            raise ValueError("right Xense sensor serial number must be non-empty")
+        if left_serial == right_serial:
+            raise ValueError("left and right Xense sensor serial numbers must be different")
         if not mac_addr.strip():
-            raise ValueError("Xense MAC address must be non-empty")
+            raise ValueError("Xense connection identifier must be non-empty")
         if baseline_duration_s < 0.0 or baseline_rate_hz <= 0.0:
             raise ValueError("baseline duration must be non-negative and rate positive")
-        self.sensor_serial_number = sensor_serial_number
-        self.mac_addr = mac_addr
+        self.left_sensor_serial_number = left_serial
+        self.right_sensor_serial_number = right_serial
+        self.mac_addr = mac_addr.strip()
         self._sensor_factory = sensor_factory
         self._output_types = output_types
         self.baseline_duration_s = float(baseline_duration_s)
         self.baseline_rate_hz = float(baseline_rate_hz)
-        self._sensor: Any | None = None
-        self._marker_reference: np.ndarray | None = None
+        self._left_sensor: Any | None = None
+        self._right_sensor: Any | None = None
+        self._left_marker_reference: np.ndarray | None = None
+        self._right_marker_reference: np.ndarray | None = None
 
     @property
     def baseline_ready(self) -> bool:
-        return self._marker_reference is not None
+        return (
+            self._left_marker_reference is not None
+            and self._right_marker_reference is not None
+        )
 
     def connect(self) -> None:
-        if self._sensor is not None:
-            return
+        if self._left_sensor is not None or self._right_sensor is not None:
+            if (
+                self._left_sensor is not None
+                and self._right_sensor is not None
+                and self.baseline_ready
+            ):
+                return
+            raise RuntimeError("Xense tactile reader is only partially connected")
         if self._sensor_factory is None:
             from xensesdk import Sensor  # type: ignore[import-not-found]
 
@@ -62,67 +89,136 @@ class XenseTactileReader:
         if self._output_types is None:
             raise RuntimeError("Xense output types are required")
         try:
-            self._sensor = self._sensor_factory(
-                self.sensor_serial_number,
+            self._left_sensor = self._sensor_factory(
+                self.left_sensor_serial_number,
                 mac_addr=self.mac_addr,
             )
-            self._establish_marker_reference()
+            self._right_sensor = self._sensor_factory(
+                self.right_sensor_serial_number,
+                mac_addr=self.mac_addr,
+            )
+            self._left_marker_reference = self._establish_marker_reference(
+                self._left_sensor,
+                "left",
+            )
+            self._right_marker_reference = self._establish_marker_reference(
+                self._right_sensor,
+                "right",
+            )
         except Exception:
-            self.close()
+            try:
+                self.close()
+            except Exception:
+                pass
             raise
 
     def read_frame(self) -> XenseTactileFrame:
         self.connect()
-        if self._sensor is None or self._marker_reference is None:
-            raise RuntimeError("Xense tactile sensor is not ready")
+        if (
+            self._left_sensor is None
+            or self._right_sensor is None
+            or self._left_marker_reference is None
+            or self._right_marker_reference is None
+        ):
+            raise RuntimeError("both Xense tactile sensors must be ready")
 
+        left = self._read_fingertip(
+            self._left_sensor,
+            self._left_marker_reference,
+            "left",
+        )
+        right = self._read_fingertip(
+            self._right_sensor,
+            self._right_marker_reference,
+            "right",
+        )
+        return XenseTactileFrame(left=left, right=right)
+
+    def close(self) -> None:
+        sensors = (self._right_sensor, self._left_sensor)
+        self._left_sensor = None
+        self._right_sensor = None
+        self._left_marker_reference = None
+        self._right_marker_reference = None
+
+        first_error: Exception | None = None
+        for sensor in sensors:
+            if sensor is None:
+                continue
+            try:
+                sensor.release()
+            except Exception as exc:
+                if first_error is None:
+                    first_error = exc
+        if first_error is not None:
+            raise first_error
+
+    def _read_fingertip(
+        self,
+        sensor: Any,
+        marker_reference: np.ndarray,
+        side: str,
+    ) -> XenseFingertipFrame:
         outputs = self._output_types
-        values = self._sensor.selectSensorInfo(
+        values = sensor.selectSensorInfo(
             outputs.Marker2D,
             outputs.ForceResultant,
+            outputs.ForceNorm,
             outputs.Rectify,
             outputs.Difference,
             outputs.Depth,
         )
-        if not isinstance(values, (tuple, list)) or len(values) != 5:
-            raise RuntimeError("Xense complete tactile read must return five outputs")
-        marker, force_torque, rectify, difference, depth = values
+        timestamp_host_s = time.time()
+        if not isinstance(values, (tuple, list)) or len(values) != 6:
+            raise RuntimeError(
+                f"{side} Xense complete tactile read must return six outputs"
+            )
+        marker, force_torque, force_norm, rectify, difference, depth = values
 
         marker_array = np.asarray(marker, dtype=np.float32)
-        if marker_array.shape != self._marker_reference.shape:
+        if marker_array.shape != marker_reference.shape:
             raise RuntimeError(
-                "Xense marker shape changed from "
-                f"{self._marker_reference.shape} to {marker_array.shape}"
+                f"{side} Xense marker shape changed from "
+                f"{marker_reference.shape} to {marker_array.shape}"
             )
         force_array = np.asarray(force_torque, dtype=np.float64).reshape(-1)
         if force_array.size != 6:
             raise RuntimeError(
-                "Xense ForceResultant must contain 6 components, "
+                f"{side} Xense ForceResultant must contain 6 components, "
                 f"got {force_array.size}"
             )
         if not np.all(np.isfinite(force_array)):
-            raise RuntimeError("Xense force/torque contains a non-finite value")
+            raise RuntimeError(
+                f"{side} Xense ForceResultant contains a non-finite value"
+            )
 
-        return XenseTactileFrame(
+        force_norm_array = np.asarray(force_norm)
+        if force_norm_array.ndim != 3 or force_norm_array.shape[-1] != 3:
+            raise RuntimeError(
+                f"{side} Xense ForceNorm must have shape (H, W, 3), "
+                f"got {force_norm_array.shape}"
+            )
+        if not np.issubdtype(force_norm_array.dtype, np.number):
+            raise RuntimeError(f"{side} Xense ForceNorm must be numeric")
+        if not np.all(np.isfinite(force_norm_array)):
+            raise RuntimeError(
+                f"{side} Xense ForceNorm contains a non-finite value"
+            )
+
+        return XenseFingertipFrame(
+            timestamp_host_s=timestamp_host_s,
             marker_offset=np.asarray(
-                marker_array - self._marker_reference,
+                marker_array - marker_reference,
                 dtype=np.float32,
             ),
             force_torque=force_array,
-            rectify=_required_image(rectify, "rectify"),
-            difference=_required_image(difference, "difference"),
-            depth=_required_image(depth, "depth"),
+            force_norm=np.ascontiguousarray(force_norm_array.copy()),
+            rectify=_required_image(rectify, f"{side} rectify"),
+            difference=_required_image(difference, f"{side} difference"),
+            depth=_required_image(depth, f"{side} depth"),
         )
 
-    def close(self) -> None:
-        sensor = self._sensor
-        self._sensor = None
-        self._marker_reference = None
-        if sensor is not None:
-            sensor.release()
-
-    def _establish_marker_reference(self) -> None:
-        assert self._sensor is not None
+    def _establish_marker_reference(self, sensor: Any, side: str) -> np.ndarray:
         outputs = self._output_types
         sample_count = max(1, round(self.baseline_duration_s * self.baseline_rate_hz))
         period_s = 1.0 / self.baseline_rate_hz
@@ -130,23 +226,23 @@ class XenseTactileReader:
         next_sample_s = time.monotonic()
         for index in range(sample_count):
             marker = np.asarray(
-                self._sensor.selectSensorInfo(outputs.Marker2D),
+                sensor.selectSensorInfo(outputs.Marker2D),
                 dtype=np.float32,
             )
             if marker.ndim < 2 or marker.shape[-1] != 2:
                 raise RuntimeError(
-                    f"Xense Marker2D must end in an x/y dimension, got {marker.shape}"
+                    f"{side} Xense Marker2D must end in an x/y dimension, "
+                    f"got {marker.shape}"
                 )
             if samples and marker.shape != samples[0].shape:
-                raise RuntimeError("Xense marker shape changed during baseline sampling")
+                raise RuntimeError(
+                    f"{side} Xense marker shape changed during baseline sampling"
+                )
             samples.append(marker.copy())
             if index + 1 < sample_count:
                 next_sample_s += period_s
                 time.sleep(max(0.0, next_sample_s - time.monotonic()))
-        self._marker_reference = np.median(
-            np.stack(samples, axis=0),
-            axis=0,
-        ).astype(np.float32)
+        return np.median(np.stack(samples, axis=0), axis=0).astype(np.float32)
 
 
 def _required_image(value: Any, name: str) -> np.ndarray:
@@ -158,4 +254,4 @@ def _required_image(value: Any, name: str) -> np.ndarray:
     return np.ascontiguousarray(image)
 
 
-__all__ = ["XenseTactileFrame", "XenseTactileReader"]
+__all__ = ["XenseFingertipFrame", "XenseTactileFrame", "XenseTactileReader"]
