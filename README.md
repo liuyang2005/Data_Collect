@@ -1,6 +1,6 @@
 # Data Collect
 
-Flexiv 双臂透明遥操作数据采集工具，用于记录从端机械臂的 RGB-D、TCP 位姿与速度、关节角、外力/力矩、夹爪宽度和单指 Xense 触觉数据。相机、机器人状态、wrench 和触觉使用独立采样频率，并分别保存主机时间戳。
+Flexiv 双臂透明遥操作数据采集工具，用于记录从端机械臂的 RGB-D、TCP 位姿与速度、关节角、外力/力矩、夹爪宽度和双指 Xense 触觉数据。相机、机器人状态、wrench 和触觉使用独立采样频率，并分别保存主机时间戳。
 
 ## 采集前配置
 
@@ -22,12 +22,13 @@ FORCE_FPS="200"
 # Follower-to-leader wrench feedback
 WRENCH_FEEDBACK_SCALE="0.0"
 
-# Slave Xense gripper and left-fingertip tactile sensor
+# Slave Xense gripper and dual-fingertip tactile sensors
 USE_GRIPPER="true"
-SLAVE_GRIPPER_ID="d254505bfaaa"
+SLAVE_GRIPPER_ID="gripper_8a429d6ea337"
 USE_TACTILE="true"
 TACTILE_FPS="60"
-TACTILE_SENSOR_SN="OG000451"
+TACTILE_LEFT_SENSOR_SN="OG001453"
+TACTILE_RIGHT_SENSOR_SN="OG001455"
 TACTILE_MAC_ADDR="$SLAVE_GRIPPER_ID"
 
 # Master Angler calibration and slave width mapping
@@ -49,7 +50,7 @@ HOME_ROBOT_IDS="1,2"
 - `SAVE_ROOT` 是轨迹保存根目录；`SESSION_NAME=""` 时自动创建 `record_YYYYmmdd_HHMMSS_xxxxxx` 目录。
 - `CAMERA_FPS`、`ROBOT_FPS`、`FORCE_FPS` 和 `TACTILE_FPS` 分别控制四类独立数据流。
 - `WRENCH_FEEDBACK_SCALE="0.0"` 关闭从臂到主臂的 wrench 反馈，`1.0` 开启反馈。两种条件均保留位姿遥操作和 `ext_wrench_in_tcp` 数据采集。
-- `SLAVE_GRIPPER_ID`、`TACTILE_SENSOR_SN`、相机序列号和机器人序列号均为真机相关配置，启动前必须核对。
+- `SLAVE_GRIPPER_ID`、左右触觉传感器序列号、相机序列号和机器人序列号均为真机相关配置，启动前必须核对。
 - Angler 编码器角度会在 `ANGLER_CLOSE_ANGLE` 到 `ANGLER_OPEN_ANGLE` 之间线性映射为 `SLAVE_CLOSE_WIDTH` 到 `SLAVE_OPEN_WIDTH`；宽度单位为米。
 - `INITIAL_GRIPPER_WIDTH` 是程序启动和退出时发送给从端夹爪的目标宽度。详细夹爪与触觉参数见 [collect/README.md](collect/README.md)。
 
@@ -58,7 +59,7 @@ HOME_ROBOT_IDS="1,2"
 在机器人控制电脑上进入仓库并激活环境：
 
 ```bash
-cd /home/xense/haptic_exo_teleop_ws/jiaqingke/Data_Collect
+cd /home/xense/haptic_exo_teleop_ws/liuyang/Data_Collect
 conda activate foar_arm_env
 sh collect/run_dual_collect.sh
 ```
@@ -127,12 +128,22 @@ record_YYYYmmdd_HHMMSS_xxxxxx/
   ext_wrench_in_tcp.npy
   ext_wrench_in_tcp_timestamps_host_s.npy
   tactile/
-    marker_offset.npy
-    force_torque.npy
-    timestamps_host_s.npy
-    rectify/*.png
-    difference/*.png
-    depth/*.png
+    left/
+      marker_offset.npy
+      force_torque.npy
+      force_norm.npy
+      timestamps_host_s.npy
+      rectify/*.png
+      difference/*.png
+      depth/*.png
+    right/
+      marker_offset.npy
+      force_torque.npy
+      force_norm.npy
+      timestamps_host_s.npy
+      rectify/*.png
+      difference/*.png
+      depth/*.png
   metadata.json
 ```
 
@@ -142,10 +153,13 @@ record_YYYYmmdd_HHMMSS_xxxxxx/
 - `robot/tcp_vel.npy`：`[vx, vy, vz, wx, wy, wz]`，单位为 `[m/s, rad/s]`。
 - `robot/q.npy`：`[q1, ..., q7, gripper_width]`。
 - `ext_wrench_in_tcp.npy`：从端 TCP 坐标系下的 `[fx, fy, fz, tx, ty, tz]`。
-- `tactile/force_torque.npy`：左指 Xense 的六维力/力矩。
+- `tactile/{left,right}/marker_offset.npy`：每只手指相对各自启动基线的 marker 位移。
+- `tactile/{left,right}/force_torque.npy`：每只手指的六维 `ForceResultant` 力/力矩。
+- `tactile/{left,right}/force_norm.npy`：SDK 原始 `ForceNorm` 法向力分量场，不是由六维合力计算的标量范数。
+- `tactile/{left,right}/timestamps_host_s.npy`：每只传感器完成 SDK 读取后的主机时间戳。
 - `metadata.json`：本次采集参数、设备信息、采样频率和数据格式说明。
 
-不同数据流的行数通常不同，不能按数组行号直接对应。后续使用数据时应依据各自的 `timestamps_host_s.npy` 做最近邻、插值或窗口对齐。
+不同数据流的行数通常不同，不能按数组行号直接对应。左右触觉传感器在同一触觉周期内顺序读取，并非严格同时曝光；后续使用数据时应依据各自的 `timestamps_host_s.npy` 做最近邻、插值或窗口对齐。
 
 ## Tools
 

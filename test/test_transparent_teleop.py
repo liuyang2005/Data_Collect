@@ -100,8 +100,11 @@ def test_launcher_selects_no_feedback_and_new_xense_ids():
 
     assert 'WRENCH_FEEDBACK_SCALE="0.0"' in launcher
     assert '--wrench-feedback-scale "$WRENCH_FEEDBACK_SCALE"' in launcher
-    assert 'SLAVE_GRIPPER_ID="d254505bfaaa"' in launcher
-    assert 'TACTILE_SENSOR_SN="OG000451"' in launcher
+    assert 'SLAVE_GRIPPER_ID="gripper_8a429d6ea337"' in launcher
+    assert 'TACTILE_LEFT_SENSOR_SN="OG001453"' in launcher
+    assert 'TACTILE_RIGHT_SENSOR_SN="OG001455"' in launcher
+    assert '--tactile-left-sensor-sn "$TACTILE_LEFT_SENSOR_SN"' in launcher
+    assert '--tactile-right-sensor-sn "$TACTILE_RIGHT_SENSOR_SN"' in launcher
     assert 'NETWORK_INTERFACES="192.168.10.2"' in launcher
     assert (
         'ANGLER_ID="/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0"'
