@@ -341,6 +341,7 @@ def test_dual_collect_keeps_gripper_enabled_by_default(monkeypatch):
     args = dual_collect.parse_args()
 
     assert args.use_gripper is True
+    assert args.home_after_recording is False
 
 
 def test_dual_collect_defaults_to_no_feedback_and_new_left_tactile_sensor(

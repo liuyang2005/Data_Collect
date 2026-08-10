@@ -80,6 +80,7 @@ python collect/dual_collect.py \
 --gripper-eps 0.0001
 --gripper-wait-time 0.1
 --null-space-period 0.1
+--home-after-recording true
 --home-on-exit true
 --home-robot-ids 1,2
 --home-delay 0.5
@@ -107,7 +108,9 @@ python collect/dual_collect.py \
 
 `--network-interface` 可以重复传入多个 LAN 网卡 IPv4 地址。当前启动脚本使用新机器的 host 侧地址 `192.168.10.2`，不是机器人本体地址。
 
-`--home-on-exit true` 时，程序在完成初始化并进入键盘控制后退出，会调用 `homing.py` 将指定机械臂复原到固定初始关节角；如果初始化未完成，则不会触发退出复原。
+`--home-after-recording true` 时，按 `v` 完整保存当前轨迹后，程序会先释放 TDK 控制，再调用 `homing.py` 将指定机械臂复原到固定初始关节角。复位成功后只重建 TDK；相机、Angler、从端夹爪和双指触觉保持连接。TDK 不会自动激活，需要再次按 `r`。直接调用 Python 脚本时该选项默认关闭，正式启动脚本默认开启。
+
+`--home-on-exit true` 独立控制退出复位；程序完成初始化并进入键盘控制后退出，会将指定机械臂复原到固定初始关节角。如果初始化未完成，则不会触发退出复原。
 
 ## 键盘控制
 
@@ -116,14 +119,14 @@ python collect/dual_collect.py \
 - `r`：激活主从遥操作。
 - `s`：暂停主从遥操作。
 - `c`：开始记录一条新轨迹。
-- `v`：结束当前轨迹记录。
+- `v`：结束并保存当前轨迹；启用自动复位时随后复位两台机械臂。
 - `q`：退出采集。
 
 推荐流程：
 
 ```text
-启动程序 -> r 启动遥操作 -> c 开始记录 -> v 结束记录
-移动机械臂回到起点 -> c 记录下一条 -> v 结束下一条
+启动程序 -> r 启动遥操作 -> c 开始记录 -> v 保存并自动复位
+等待 TDK 重新就绪 -> r 重新激活 -> c 记录下一条 -> v 保存并自动复位
 s 暂停遥操作 -> q 退出程序
 ```
 

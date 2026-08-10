@@ -17,6 +17,8 @@ import flexivrdk # this must be imported
 from datetime import datetime
 
 DEFAULT_FPS = 30
+KEYBOARD_RESET = "reset"
+KEYBOARD_QUIT = "quit"
 
 from homing import FIXED_INITIAL_GRIPPER_WIDTH
 
@@ -123,6 +125,12 @@ def parse_args():
     parser.add_argument("--slave-close-width", type=float, default=0.0, help="Slave gripper closed width in meters")
     parser.add_argument("--initial-gripper-width", type=float, default=FIXED_INITIAL_GRIPPER_WIDTH, help="Slave gripper width used at startup and exit")
     parser.add_argument(
+        "--home-after-recording",
+        type=parse_bool,
+        default=False,
+        help="Home configured robots after each successfully saved recording",
+    )
+    parser.add_argument(
         "--home-on-exit",
         type=parse_bool,
         default=False,
@@ -131,10 +139,10 @@ def parse_args():
     parser.add_argument(
         "--home-robot-ids",
         default="1,2",
-        help="Comma-separated robot IDs to home on exit, for example 1,2",
+        help="Comma-separated robot IDs used by enabled homing, for example 1,2",
     )
-    parser.add_argument("--home-delay", type=float, default=0.5, help="Delay before homing on exit")
-    parser.add_argument("--home-retries", type=int, default=3, help="Maximum homing attempts per robot on exit")
+    parser.add_argument("--home-delay", type=float, default=0.5, help="Delay before each homing cycle")
+    parser.add_argument("--home-retries", type=int, default=3, help="Maximum homing attempts per robot")
     parser.add_argument("--home-retry-delay", type=float, default=2.0, help="Delay between homing retries")
     args = parser.parse_args()
     if args.fps <= 0:
@@ -199,9 +207,7 @@ def parse_home_robot_ids(value):
     return robot_ids
 
 
-def home_robots_on_exit(args):
-    if not args.home_on_exit:
-        return True
+def home_configured_robots(args, reason):
     if args.home_delay > 0:
         time.sleep(args.home_delay)
 
@@ -213,8 +219,9 @@ def home_robots_on_exit(args):
         for attempt in range(1, args.home_retries + 1):
             try:
                 logger.info(
-                    "Homing robot %d on exit (attempt %d/%d)",
+                    "Homing robot %d %s (attempt %d/%d)",
                     robot_id,
+                    reason,
                     attempt,
                     args.home_retries,
                 )
@@ -223,11 +230,18 @@ def home_robots_on_exit(args):
                 break
             except Exception as exc:
                 if attempt >= args.home_retries:
-                    logger.exception("Failed to home robot %d on exit: %s", robot_id, exc)
+                    logger.exception(
+                        "Failed to home robot %d %s: %s",
+                        robot_id,
+                        reason,
+                        exc,
+                    )
                 else:
                     logger.warning(
-                        "Failed to home robot %d on exit attempt %d/%d: %s; retrying in %.1fs",
+                        "Failed to home robot %d %s on attempt %d/%d: %s; "
+                        "retrying in %.1fs",
                         robot_id,
+                        reason,
                         attempt,
                         args.home_retries,
                         exc,
@@ -237,6 +251,12 @@ def home_robots_on_exit(args):
                         time.sleep(args.home_retry_delay)
         ok = ok and robot_ok
     return ok
+
+
+def home_robots_on_exit(args):
+    if not args.home_on_exit:
+        return True
+    return home_configured_robots(args, "on exit")
 
 
 def build_metadata(args, camera_serials, tdk_tcp_pose_order, saved_tcp_pose_order):
@@ -451,7 +471,7 @@ def run_keyboard_loop(
     gripper_wait_time,
     null_space_period,
     use_gripper,
-) -> None:
+) -> str:
     import termios
     import tty
 
@@ -523,9 +543,11 @@ def run_keyboard_loop(
                     camera_names=d415_cameras.keys(),
                 )
                 logger.info("Recording stopped")
+                if args.home_after_recording:
+                    return KEYBOARD_RESET
             elif key == "q":
                 logger.info("Quit requested by keyboard")
-                break
+                return KEYBOARD_QUIT
 
             if use_gripper:
                 last_master_width = sync_gripper(
@@ -548,6 +570,7 @@ def run_keyboard_loop(
         termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_term_settings)
         if activated:
             teleop_pair.activate(False)
+    return KEYBOARD_QUIT
 
 
 def main() -> None:
@@ -575,55 +598,62 @@ def main() -> None:
     slave_gripper = None
     tactile_reader = None
     try:
-        with TransparentCartesianTeleopPair(
-            args.first_sn,
-            args.second_sn,
-            network_interface_whitelist=args.network_interface,
-        ) as teleop_pair:
-            teleop_pair.set_wrench_feedback_scale(args.wrench_feedback_scale)
-            if args.use_gripper:
-                slave_gripper = init_xense(args.slave_gripper_id, "slave_xense")
-                master_gripper = init_angler_controller(
-                    encoder_id=args.angler_id,
-                    index=args.angler_index,
-                    baudrate=args.angler_baudrate,
-                    gap=args.angler_gap,
-                    strict=args.angler_strict,
-                    open_angle=args.angler_open_angle,
-                    close_angle=args.angler_close_angle,
-                    open_width=args.slave_open_width,
-                    close_width=args.slave_close_width,
-                )
-                move_slave_gripper_to_initial_width(args, slave_gripper)
-
-            if args.use_tactile:
-                tactile_reader = XenseTactileReader(
-                    left_sensor_serial_number=args.tactile_left_sensor_sn,
-                    right_sensor_serial_number=args.tactile_right_sensor_sn,
-                    mac_addr=args.tactile_mac_addr,
-                )
-                tactile_reader.connect()
-
-            cameras = init_cameras(CAMERA_PROFILES, args.camera_fps or args.fps)
-            state_reader = TeleopSlaveStateReader(teleop_pair)
-            ready_for_exit_homing = True
-
-            run_keyboard_loop(
-                args,
-                teleop_pair,
-                state_reader,
-                cameras,
-                master_gripper,
-                slave_gripper,
-                tactile_reader,
-                D415_CAMERAS,
-                TDK_TCP_POSE_ORDER,
-                SAVED_TCP_POSE_ORDER,
-                args.gripper_eps,
-                args.gripper_wait_time,
-                args.null_space_period,
-                args.use_gripper,
+        if args.use_gripper:
+            slave_gripper = init_xense(args.slave_gripper_id, "slave_xense")
+            master_gripper = init_angler_controller(
+                encoder_id=args.angler_id,
+                index=args.angler_index,
+                baudrate=args.angler_baudrate,
+                gap=args.angler_gap,
+                strict=args.angler_strict,
+                open_angle=args.angler_open_angle,
+                close_angle=args.angler_close_angle,
+                open_width=args.slave_open_width,
+                close_width=args.slave_close_width,
             )
+            move_slave_gripper_to_initial_width(args, slave_gripper)
+
+        if args.use_tactile:
+            tactile_reader = XenseTactileReader(
+                left_sensor_serial_number=args.tactile_left_sensor_sn,
+                right_sensor_serial_number=args.tactile_right_sensor_sn,
+                mac_addr=args.tactile_mac_addr,
+            )
+            tactile_reader.connect()
+
+        cameras = init_cameras(CAMERA_PROFILES, args.camera_fps or args.fps)
+
+        while True:
+            with TransparentCartesianTeleopPair(
+                args.first_sn,
+                args.second_sn,
+                network_interface_whitelist=args.network_interface,
+            ) as teleop_pair:
+                teleop_pair.set_wrench_feedback_scale(args.wrench_feedback_scale)
+                state_reader = TeleopSlaveStateReader(teleop_pair)
+                ready_for_exit_homing = True
+
+                outcome = run_keyboard_loop(
+                    args,
+                    teleop_pair,
+                    state_reader,
+                    cameras,
+                    master_gripper,
+                    slave_gripper,
+                    tactile_reader,
+                    D415_CAMERAS,
+                    TDK_TCP_POSE_ORDER,
+                    SAVED_TCP_POSE_ORDER,
+                    args.gripper_eps,
+                    args.gripper_wait_time,
+                    args.null_space_period,
+                    args.use_gripper,
+                )
+
+            if outcome != KEYBOARD_RESET:
+                break
+            if not home_configured_robots(args, "after recording"):
+                raise RuntimeError("Failed to home robots after recording")
     except Exception as e:
         logger.error(str(e))
         exit_code = 1

@@ -7,7 +7,7 @@
 #   r: activate teleoperation
 #   s: deactivate teleoperation
 #   c: start recording one trajectory
-#   v: stop current trajectory recording
+#   v: stop/save current trajectory, then home both robots when enabled
 #   q: quit
 
 PYTHON_BIN="python3"
@@ -71,7 +71,9 @@ GRIPPER_EPS="0.0001"
 GRIPPER_WAIT_TIME="0.1"
 NULL_SPACE_PERIOD="0.1"
 
-# Return both robots to the fixed initial joint pose when the collector exits.
+# Return both robots to the fixed initial joint pose after each saved recording.
+HOME_AFTER_RECORDING="true"
+# Also return both robots when the collector exits.
 HOME_ON_EXIT="true"
 HOME_ROBOT_IDS="1,2"
 HOME_DELAY="0.5"
@@ -96,6 +98,7 @@ set -- \
   --gripper-eps "$GRIPPER_EPS" \
   --gripper-wait-time "$GRIPPER_WAIT_TIME" \
   --null-space-period "$NULL_SPACE_PERIOD" \
+  --home-after-recording "$HOME_AFTER_RECORDING" \
   --home-on-exit "$HOME_ON_EXIT" \
   --home-robot-ids "$HOME_ROBOT_IDS" \
   --home-delay "$HOME_DELAY" \

@@ -39,8 +39,9 @@ SLAVE_OPEN_WIDTH="0.0"
 SLAVE_CLOSE_WIDTH="0.0"
 INITIAL_GRIPPER_WIDTH="0.0"
 
-# Optional LAN whitelist and exit homing
+# Optional LAN whitelist and homing
 NETWORK_INTERFACES=""
+HOME_AFTER_RECORDING="true"
 HOME_ON_EXIT="true"
 HOME_ROBOT_IDS="1,2"
 ```
@@ -70,26 +71,26 @@ sh collect/run_dual_collect.sh
 r  激活遥操作
 s  暂停遥操作
 c  开始记录一条轨迹
-v  停止当前轨迹记录
+v  停止并保存当前轨迹，然后自动复位两台机械臂
 q  退出程序
 ```
 
 推荐操作顺序：
 
 ```text
-启动程序 -> r 激活遥操作 -> c 开始采集 -> v 停止当前轨迹
-回到下一条轨迹起点 -> c 继续采集 -> v 停止
+启动程序 -> r 激活遥操作 -> c 开始采集 -> v 保存并自动复位
+等待 TDK 重新就绪 -> r 重新激活 -> c 继续采集 -> v 保存并自动复位
 s 暂停遥操作 -> q 退出程序
 ```
 
-每次按 `c` 都会创建一条新轨迹。正常完成一条轨迹后，可通过遥操作返回下一条轨迹的起点，不需要重复执行 homing。
+每次按 `c` 都会创建一条新轨迹。`HOME_AFTER_RECORDING="true"` 时，按 `v` 会先完整保存数据，再停止 TDK、将两台机械臂复位到固定初始关节角，并重新创建 TDK。相机、Angler、从端夹爪和双指触觉在整个进程中保持连接，不会随每条轨迹重复初始化。复位完成后 TDK 保持未激活，需要再次按 `r` 才能开始下一条操作。
 
 ## 固定初始点
 
 主端和从端的固定初始关节角在 `collect/homing.py` 中配置，单位为 degree：
 
 ```python
-FIXED_INITIAL_JOINTS_DEG = [0.87, 0.71, 6.22, 107.67, 5.33, 20.44, 50.42]
+FIXED_INITIAL_JOINTS_DEG = [0, -32, 0, 90, 0, 28, 45]
 
 CUSTOM_HOME_JOINTS_DEG = {
     1: FIXED_INITIAL_JOINTS_DEG.copy(),
@@ -104,7 +105,7 @@ python3 collect/homing.py -id 1
 python3 collect/homing.py -id 2
 ```
 
-当 `HOME_ON_EXIT="true"` 时，程序完成初始化并进入键盘控制后退出，会复原 `HOME_ROBOT_IDS` 指定的机械臂；初始化失败时不会自动复原。
+`HOME_AFTER_RECORDING="true"` 控制每条成功保存后的自动复位；`HOME_ON_EXIT="true"` 独立控制程序退出时的复位。两者均使用 `HOME_ROBOT_IDS`，执行前必须确认从当前姿态到固定关节角的运动路径无碰撞。
 
 ## 采集数据
 

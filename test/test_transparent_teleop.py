@@ -114,3 +114,5 @@ def test_launcher_selects_no_feedback_and_new_xense_ids():
     assert 'ANGLER_CLOSE_ANGLE="314.561"' in launcher
     assert 'SLAVE_OPEN_WIDTH="0.075"' in launcher
     assert 'SLAVE_CLOSE_WIDTH="0.001"' in launcher
+    assert 'HOME_AFTER_RECORDING="true"' in launcher
+    assert '--home-after-recording "$HOME_AFTER_RECORDING"' in launcher
