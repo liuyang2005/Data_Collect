@@ -211,7 +211,11 @@ def init_cameras(
 def init_xense(gripper_id: str, name: str = "Xense"):
     from gripper_devices import XenseGripperAdapter
 
-    gripper = XenseGripperAdapter(mac_addr=gripper_id, name=name)
+    gripper = XenseGripperAdapter(
+        mac_addr=gripper_id,
+        name=name,
+        force_n=30.0,
+    )
     gripper.open()
     return gripper
 

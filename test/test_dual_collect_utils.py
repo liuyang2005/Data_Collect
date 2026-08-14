@@ -245,7 +245,7 @@ def test_init_xense_uses_direct_sdk_and_preserves_legacy_gripper_interface(monke
     assert gripper.read() == pytest.approx(0.025)
     gripper.move(0.04)
     gripper.close()
-    assert calls["set_position"] == (40.0, 80.0, 20.0)
+    assert calls["set_position"] == (40.0, 80.0, 30.0)
     assert calls["released"] is True
 
 
