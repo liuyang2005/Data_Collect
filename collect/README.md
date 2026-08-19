@@ -6,7 +6,8 @@
 - `transparent_teleop.py`：Flexiv TDK `TransparentCartesianTeleopLAN` 遥操作封装。
 - `gripper_devices.py`：直接使用 `pyserial` 和 `xensegripper` 的 Angler/夹爪兼容层，对采集代码继续提供 `read()/move()/close()`。
 - `dual_teleop.py`：旧版 `CartesianTeleopLAN` 封装，保留作参考。
-- `dual_collect_utils.py`：相机、夹爪、目录创建和多频率数据保存工具，默认采集主视角相机和腕部相机。
+- `dual_collect_utils.py`：相机、夹爪、目录创建和兼容保存工具，默认采集主视角相机和腕部相机。
+- `single_thread_collect.py`：10 Hz 统一周期采集、公共时间戳和异步原子写盘。
 - `homing.py`：固定初始关节角复原脚本。
 
 ## 基本用法
@@ -38,7 +39,6 @@ python collect/dual_collect.py \
   -2 <slave_robot_sn> \
   --slave-gripper-id <slave_xense_id> \
   --use-tactile true \
-  --tactile-fps 60 \
   --tactile-left-sensor-sn OG001453 \
   --tactile-right-sensor-sn OG001455 \
   --tactile-mac-addr <slave_xense_id> \
@@ -69,12 +69,9 @@ python collect/dual_collect.py \
 ## 常用可选参数
 
 ```bash
---fps 30
---camera-fps 30
---robot-fps 100
---force-fps 200
+--fps 10
+--camera-device-fps 30
 --wrench-feedback-scale 0.0
---tactile-fps 60
 --session-name record_test
 --network-interface 192.168.2.102
 --gripper-eps 0.0001
@@ -87,13 +84,9 @@ python collect/dual_collect.py \
 --initial-gripper-width 0.08
 ```
 
-`--fps` 是兼容旧脚本的默认频率；如果没有显式传入 `--camera-fps` 或 `--robot-fps`，对应数据流会回退使用 `--fps`；如果没有显式传入 `--force-fps`，力数据会回退使用 `--robot-fps`，再回退到 `--fps`。当前多频版本中：
+`--fps` 是相机、机器人状态、wrench、夹爪和双指触觉共同使用的逻辑采集频率，正式启动脚本固定为 10 Hz。`--camera-device-fps` 是 RealSense 硬件流 profile，当前两台相机保持 `640x480@30`，保存数据仍为 10 Hz。旧的 `--camera-fps`、`--robot-fps`、`--force-fps` 和 `--tactile-fps` 仅保留命令行兼容性；如果显式传入，值必须与 `--fps` 相同。
 
-- `--camera-fps`：RGBD 相机采集线程频率。
-- `--robot-fps`：从臂 TCP、关节角和夹爪宽度采集线程频率。
-- `--force-fps`：从臂外力估计 `ext_wrench_in_tcp` 采集线程频率。
 - `--wrench-feedback-scale`：TDK 从臂到主臂的 wrench 反馈开关；仅接受 `0.0`（关闭）或 `1.0`（开启）。
-- `--tactile-fps`：双指 Xense 触觉采集线程频率；与相机、机器人和腕力线程相互独立。
 
 `--wrench-feedback-scale` 在程序启动时设置，切换有/无力反馈条件后需要重新启动采集程序。该参数只控制从臂 wrench 是否反馈到主臂，不影响主臂到从臂的位姿遥操作，也不会缩放或关闭 `ext_wrench_in_tcp` 的采集与保存；因此有反馈和无反馈数据仍可使用同一套 wrench 字段进行比较。
 
@@ -130,7 +123,7 @@ python collect/dual_collect.py \
 s 暂停遥操作 -> q 退出程序
 ```
 
-每次按 `c` 都会创建一个新的轨迹目录。当前版本会启动独立采集线程：相机按 `--camera-fps` 采集 RGBD，机器人状态按 `--robot-fps` 保存从臂 TCP、从臂关节角和从端夹爪宽度，力数据按 `--force-fps` 保存外力估计，双指触觉按 `--tactile-fps` 采集完整帧。相机和触觉取帧分别使用独立的 PNG writer，避免 `cv2.imwrite()` 直接拖慢采样线程。左右触觉传感器在同一采集周期中顺序调用，单只传感器的各字段来自同一次 SDK 调用，但两指并非严格同时曝光。
+每次按 `c` 都会创建一个新的轨迹目录。当前版本只有一个设备采集线程：每 100 ms 先生成一个公共时间戳，再顺序读取两台相机、一次从臂状态、夹爪和左右触觉。一次从臂状态同时生成 TCP、关节、速度和 wrench，所有启用模态按同一个周期编号和时间戳保存。独立的有界 writer 线程只负责编码和写盘，不读取设备；任意图片写入失败时整个周期都不会提交。
 
 主视角使用序列号 `104122061018` 的 D415，腕部使用序列号 `260322275475` 的 D405；两台相机统一按 `640x480@30` profile 初始化。序列号是机器相关配置，换线或换机后必须重新核对。目录名和 PNG/时间戳保存格式不变。
 
@@ -172,6 +165,14 @@ record_YYYYmmdd_HHMMSS/
       rectify/
       difference/
       depth/
+  timing/
+    cycle_index.npy
+    cycle_timestamps_host_s.npy
+    cycle_duration_s.npy
+    deadline_overrun_s.npy
+    write_started_host_s.npy
+    write_completed_host_s.npy
+    source_completed_host_s.npz
   metadata.json
 ```
 
@@ -181,20 +182,22 @@ record_YYYYmmdd_HHMMSS/
 - `cam_260322274925_wrist/color/*.png`：腕部相机 RGB 图像。
 - `cam_*/color/*.png`：任意相机 RGB 图像通配路径。
 - `cam_*/depth/*.png`：对应相机的 depth 图像，文件名与同一相机 color 帧号一致。
-- `cam_*/timestamps_host_s.npy`：`(T_camera,)`，相机帧保存时的主机时间戳，单位秒。
+- `cam_*/timestamps_host_s.npy`：`(T,)`，统一采集周期开始时的公共主机时间戳，单位秒。
 - `robot/tcp_pose.npy`：`(T_robot, 8)`，每行 `[x, y, z, qx, qy, qz, qw, gripper_width]`
 - `robot/tcp_vel.npy`：`(T_robot, 6)`，每行来自从臂 `RobotStates.tcp_vel`，顺序为 `[vx, vy, vz, wx, wy, wz]`，相对 world frame，单位为 `[m/s, rad/s]`
 - `robot/q.npy`：`(T_robot, 8)`，每行 `[q1, q2, q3, q4, q5, q6, q7, gripper_width]`
-- `robot/timestamps_host_s.npy`：`(T_robot,)`，上述三个 robot 数组共用的主机时间戳，单位秒
+- `robot/timestamps_host_s.npy`：`(T,)`，上述三个 robot 数组共用的公共周期时间戳，单位秒
 - `ext_wrench_in_tcp.npy`：`(T, 6)`，每行来自从臂 `RobotStates.ext_wrench_in_tcp`
-- `ext_wrench_in_tcp_timestamps_host_s.npy`：`(T_force,)`，力数据采样时的主机时间戳，单位秒
+- `ext_wrench_in_tcp_timestamps_host_s.npy`：`(T,)`，与 robot 和图像一致的公共周期时间戳，单位秒
 - `tactile/{left,right}/marker_offset.npy`：`(T_tactile, ...)`，`float32`，每只手指的 marker 点阵相对自身启动基线的偏移
 - `tactile/{left,right}/force_torque.npy`：`(T_tactile, 6)`，`float64`，每只手指的 `[Fx, Fy, Fz, Tx, Ty, Tz]`，保留 Xense SDK 原始单位
 - `tactile/{left,right}/force_norm.npy`：`(T_tactile, H, W, 3)`，SDK 原始 `ForceNorm` 法向力分量场；不是由 `ForceResultant` 计算的标量范数，空间尺寸由运行时 SDK 输出决定
-- `tactile/{left,right}/timestamps_host_s.npy`：`(T_tactile,)`，对应手指 SDK 读取完成后的主机时间戳，单位秒
+- `tactile/{left,right}/timestamps_host_s.npy`：`(T,)`，与其他模态一致的公共周期时间戳，单位秒
 - `tactile/{left,right}/{rectify,difference,depth}/*.png`：同一触觉行对应的三类图像，使用六位连续编号
+- `timing/write_completed_host_s.npy`：writer 完成该周期全部 PNG 写入并接收数值载荷的应用层时间
+- `timing/source_completed_host_s.npz`：各设备实际完成读取的诊断时间，不参与数据对齐
 
-`tcp_pose`、`tcp_vel` 和 `q` 从同一次从臂 `RobotStates` 快照提取，所以三者逐行对应并共享时间戳。多频版本中，`T_camera`、`T_robot`、`T_force` 和 `T_tactile` 通常不同，不能假设图片帧号、robot 行号、wrench 行号与触觉行号一一对应；左右触觉也应按各自时间戳对齐。后续 ACP 或 LeRobot 转换脚本应按各自时间戳做最近邻、插值或窗口聚合对齐。
+`tcp_pose`、`tcp_vel`、`q` 和 wrench 从同一次从臂 `RobotStates` 快照提取。每个周期只有在全部启用设备读取成功后才会提交，因此相机、robot、wrench 和左右 tactile 都具有相同的长度 `T`，第 `i` 行和第 `i` 张图片可以直接对应，不需要后续最近邻、插值或窗口对齐。
 
 ## 主端 Angler 编码器控制夹爪
 

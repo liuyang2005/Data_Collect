@@ -19,10 +19,8 @@ SECOND_SN="Rizon4R-062115"
 # Data collection
 SAVE_ROOT="/home/xense/haptic_exo_teleop_ws/Data/smoke_0810"
 SESSION_NAME=""
-FPS="30"
-CAMERA_FPS="30"
-ROBOT_FPS="100"
-FORCE_FPS="200"
+FPS="10"
+CAMERA_DEVICE_FPS="30"
 
 # Camera profiles configured in dual_collect_utils.py and verified on this machine:
 # D415 104122061018 and D405 260322275475, both at 640x480.
@@ -40,7 +38,6 @@ SLAVE_GRIPPER_ID="8a429d6ea337"
 # Dual-fingertip Xense tactile collection.
 # Both tactile sensors use the shared slave-gripper connection identifier.
 USE_TACTILE="true"
-TACTILE_FPS="60"
 TACTILE_LEFT_SENSOR_SN="OG001453"
 TACTILE_RIGHT_SENSOR_SN="OG001455"
 TACTILE_MAC_ADDR="$SLAVE_GRIPPER_ID"
@@ -88,12 +85,9 @@ set -- \
   -2 "$SECOND_SN" \
   --save-root "$SAVE_ROOT" \
   --fps "$FPS" \
-  --camera-fps "$CAMERA_FPS" \
-  --robot-fps "$ROBOT_FPS" \
-  --force-fps "$FORCE_FPS" \
+  --camera-device-fps "$CAMERA_DEVICE_FPS" \
   --wrench-feedback-scale "$WRENCH_FEEDBACK_SCALE" \
   --use-tactile "$USE_TACTILE" \
-  --tactile-fps "$TACTILE_FPS" \
   --use-gripper "$USE_GRIPPER" \
   --gripper-eps "$GRIPPER_EPS" \
   --gripper-wait-time "$GRIPPER_WAIT_TIME" \

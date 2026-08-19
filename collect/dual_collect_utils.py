@@ -782,95 +782,36 @@ def collect_teleop_data(
     tactile_reader=None,
     tactile_fps: Optional[int] = None,
 ) -> None:
-    effective_camera_fps = camera_fps if camera_fps is not None else fps
-    effective_robot_fps = robot_fps if robot_fps is not None else fps
-    effective_force_fps = force_fps if force_fps is not None else effective_robot_fps
-    effective_tactile_fps = tactile_fps if tactile_fps is not None else fps
-    state_reader_lock = threading.Lock()
-    errors = []
-
-    def run_worker(worker, *args, **kwargs):
-        try:
-            worker(*args, **kwargs)
-        except BaseException as exc:
-            errors.append(exc)
-            stop_event.set()
-
-    print("Start data collection...")
-
-    threads = []
-    if cameras:
-        threads.append(
-            threading.Thread(
-                target=run_worker,
-                args=(
-                    collect_camera_stream,
-                    cameras,
-                    session_dir,
-                    stop_event,
-                    effective_camera_fps,
-                    status_period,
-                ),
-                daemon=True,
-            )
+    stream_rates = {
+        "camera_fps": camera_fps,
+        "robot_fps": robot_fps,
+        "force_fps": force_fps,
+        "tactile_fps": tactile_fps,
+    }
+    mismatched = {
+        name: value
+        for name, value in stream_rates.items()
+        if value is not None and value != fps
+    }
+    if mismatched:
+        values = ", ".join(f"{name}={value}" for name, value in mismatched.items())
+        raise ValueError(
+            f"single-thread collection requires every stream to use fps={fps}; {values}"
         )
 
-    threads.append(
-        threading.Thread(
-            target=run_worker,
-            args=(
-                collect_robot_stream,
-                state_reader,
-                slave_gripper,
-                session_dir,
-                stop_event,
-                effective_robot_fps,
-                use_gripper,
-                status_period,
-                state_reader_lock,
-            ),
-            daemon=True,
-        )
+    from single_thread_collect import collect_aligned_teleop_data
+
+    collect_aligned_teleop_data(
+        state_reader=state_reader,
+        slave_gripper=slave_gripper,
+        cameras=cameras,
+        session_dir=session_dir,
+        stop_event=stop_event,
+        fps=fps,
+        use_gripper=use_gripper,
+        status_period=status_period,
+        tactile_reader=tactile_reader,
     )
-    threads.append(
-        threading.Thread(
-            target=run_worker,
-            args=(
-                collect_force_stream,
-                state_reader,
-                session_dir,
-                stop_event,
-                effective_force_fps,
-                status_period,
-                state_reader_lock,
-            ),
-            daemon=True,
-        )
-    )
-    if tactile_reader is not None:
-        threads.append(
-            threading.Thread(
-                target=run_worker,
-                args=(
-                    collect_tactile_stream,
-                    tactile_reader,
-                    session_dir,
-                    stop_event,
-                    effective_tactile_fps,
-                    status_period,
-                ),
-                daemon=True,
-            )
-        )
-
-    for thread in threads:
-        thread.start()
-
-    for thread in threads:
-        thread.join()
-
-    if errors:
-        raise errors[0]
 
 
 class RateControl:

@@ -16,7 +16,7 @@ import time
 import flexivrdk # this must be imported
 from datetime import datetime
 
-DEFAULT_FPS = 30
+DEFAULT_FPS = 10
 KEYBOARD_RESET = "reset"
 KEYBOARD_QUIT = "quit"
 
@@ -48,22 +48,28 @@ def parse_args():
     parser.add_argument("--session-name", default=None, help="Optional session directory name")
     parser.add_argument("--fps", type=int, default=DEFAULT_FPS, help="Collection FPS")
     parser.add_argument(
+        "--camera-device-fps",
+        type=int,
+        default=30,
+        help="RealSense hardware stream FPS; aligned samples are still collected at --fps.",
+    )
+    parser.add_argument(
         "--camera-fps",
         type=int,
         default=None,
-        help="Camera collection FPS. Defaults to --fps when omitted.",
+        help="Deprecated compatibility option; when set it must equal --fps.",
     )
     parser.add_argument(
         "--robot-fps",
         type=int,
         default=None,
-        help="TCP, joint, and gripper collection FPS. Defaults to --fps when omitted.",
+        help="Deprecated compatibility option; when set it must equal --fps.",
     )
     parser.add_argument(
         "--force-fps",
         type=int,
         default=None,
-        help="Force/wrench collection FPS. Defaults to --robot-fps, then --fps.",
+        help="Deprecated compatibility option; when set it must equal --fps.",
     )
     parser.add_argument(
         "--wrench-feedback-scale",
@@ -81,8 +87,8 @@ def parse_args():
     parser.add_argument(
         "--tactile-fps",
         type=int,
-        default=60,
-        help="Independent Xense tactile collection FPS",
+        default=None,
+        help="Deprecated compatibility option; when set it must equal --fps.",
     )
     parser.add_argument(
         "--tactile-left-sensor-sn",
@@ -147,14 +153,35 @@ def parse_args():
     args = parser.parse_args()
     if args.fps <= 0:
         parser.error("--fps must be positive")
+    if args.camera_device_fps <= 0:
+        parser.error("--camera-device-fps must be positive")
     if args.camera_fps is not None and args.camera_fps <= 0:
         parser.error("--camera-fps must be positive")
     if args.robot_fps is not None and args.robot_fps <= 0:
         parser.error("--robot-fps must be positive")
     if args.force_fps is not None and args.force_fps <= 0:
         parser.error("--force-fps must be positive")
-    if args.use_tactile and args.tactile_fps <= 0:
+    if args.tactile_fps is not None and args.tactile_fps <= 0:
         parser.error("--tactile-fps must be positive")
+    stream_rates = {
+        "--camera-fps": args.camera_fps,
+        "--robot-fps": args.robot_fps,
+        "--force-fps": args.force_fps,
+        "--tactile-fps": args.tactile_fps,
+    }
+    mismatched_rates = {
+        name: value
+        for name, value in stream_rates.items()
+        if value is not None and value != args.fps
+    }
+    if mismatched_rates:
+        values = ", ".join(
+            f"{name}={value}" for name, value in mismatched_rates.items()
+        )
+        parser.error(
+            f"single-thread collection requires every stream to use --fps={args.fps}; "
+            f"{values}"
+        )
     if args.use_tactile and not args.tactile_left_sensor_sn.strip():
         parser.error("--use-tactile true requires --tactile-left-sensor-sn")
     if args.use_tactile and not args.tactile_right_sensor_sn.strip():
@@ -265,11 +292,37 @@ def build_metadata(args, camera_serials, tdk_tcp_pose_order, saved_tcp_pose_orde
         {
             "camera_serials": camera_serials,
             "recorded_robot": "second",
-            "collection_mode": "multi_rate_threads",
-            "effective_camera_fps": args.camera_fps or args.fps,
-            "effective_robot_fps": args.robot_fps or args.fps,
-            "effective_force_fps": args.force_fps or args.robot_fps or args.fps,
-            "effective_tactile_fps": args.tactile_fps,
+            "collection_mode": "single_rate_single_acquisition_thread",
+            "collection_fps": args.fps,
+            "camera_device_fps": args.camera_device_fps,
+            "effective_camera_fps": args.fps,
+            "effective_robot_fps": args.fps,
+            "effective_force_fps": args.fps,
+            "effective_tactile_fps": args.fps,
+            "timestamp_semantics": (
+                "one shared host timestamp assigned at the start of each "
+                "acquisition cycle"
+            ),
+            "write_timestamp_semantics": (
+                "application-level completion after every image in the cycle "
+                "has been written and numeric payload has been accepted by the writer"
+            ),
+            "timing_stream_files": {
+                "cycle_index": "timing/cycle_index.npy",
+                "cycle_timestamps": "timing/cycle_timestamps_host_s.npy",
+                "scheduled": "timing/scheduled_monotonic_ns.npy",
+                "acquisition_started": (
+                    "timing/acquisition_started_monotonic_ns.npy"
+                ),
+                "acquisition_completed": (
+                    "timing/acquisition_completed_monotonic_ns.npy"
+                ),
+                "cycle_duration": "timing/cycle_duration_s.npy",
+                "deadline_overrun": "timing/deadline_overrun_s.npy",
+                "write_started": "timing/write_started_host_s.npy",
+                "write_completed": "timing/write_completed_host_s.npy",
+                "source_completed": "timing/source_completed_host_s.npz",
+            },
             "tcp_pose_source": (
                 "TransparentCartesianTeleopLAN.instances(0)[1].states().tcp_pose"
             ),
@@ -443,11 +496,7 @@ def start_recording(
             "stop_event": stop_event,
             "fps": args.fps,
             "use_gripper": args.use_gripper,
-            "camera_fps": args.camera_fps,
-            "robot_fps": args.robot_fps,
-            "force_fps": args.force_fps,
             "tactile_reader": tactile_reader,
-            "tactile_fps": args.tactile_fps,
         },
         daemon=True,
     )
@@ -621,7 +670,7 @@ def main() -> None:
             )
             tactile_reader.connect()
 
-        cameras = init_cameras(CAMERA_PROFILES, args.camera_fps or args.fps)
+        cameras = init_cameras(CAMERA_PROFILES, getattr(args, "camera_device_fps", 30))
 
         while True:
             with TransparentCartesianTeleopPair(

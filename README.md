@@ -1,6 +1,6 @@
 # Data Collect
 
-Flexiv 双臂透明遥操作数据采集工具，用于记录从端机械臂的 RGB-D、TCP 位姿与速度、关节角、外力/力矩、夹爪宽度和双指 Xense 触觉数据。相机、机器人状态、wrench 和触觉使用独立采样频率，并分别保存主机时间戳。
+Flexiv 双臂透明遥操作数据采集工具，用于记录从端机械臂的 RGB-D、TCP 位姿与速度、关节角、外力/力矩、夹爪宽度和双指 Xense 触觉数据。所有设备由同一个采集线程按 10 Hz 顺序读取，每个周期在读取开始前分配一个公共主机时间戳。
 
 ## 采集前配置
 
@@ -13,11 +13,9 @@ SECOND_SN="Rizon4R-062115"
 SAVE_ROOT="/home/xense/haptic_exo_teleop_ws/liuyang/Data/pick_0721"
 SESSION_NAME=""
 
-# Stream rates
-FPS="30"
-CAMERA_FPS="30"
-ROBOT_FPS="100"
-FORCE_FPS="200"
+# Aligned collection rate and RealSense hardware stream rate
+FPS="10"
+CAMERA_DEVICE_FPS="30"
 
 # Follower-to-leader wrench feedback
 WRENCH_FEEDBACK_SCALE="0.0"
@@ -26,7 +24,6 @@ WRENCH_FEEDBACK_SCALE="0.0"
 USE_GRIPPER="true"
 SLAVE_GRIPPER_ID="8a429d6ea337"
 USE_TACTILE="true"
-TACTILE_FPS="60"
 TACTILE_LEFT_SENSOR_SN="OG001453"
 TACTILE_RIGHT_SENSOR_SN="OG001455"
 TACTILE_MAC_ADDR="$SLAVE_GRIPPER_ID"
@@ -49,7 +46,7 @@ HOME_ROBOT_IDS="1,2"
 关键说明：
 
 - `SAVE_ROOT` 是轨迹保存根目录；`SESSION_NAME=""` 时自动创建 `record_YYYYmmdd_HHMMSS_xxxxxx` 目录。
-- `CAMERA_FPS`、`ROBOT_FPS`、`FORCE_FPS` 和 `TACTILE_FPS` 分别控制四类独立数据流。
+- `FPS="10"` 控制所有模态的统一逻辑采集频率；`CAMERA_DEVICE_FPS="30"` 只控制 RealSense 硬件流 profile，不改变保存频率。
 - `WRENCH_FEEDBACK_SCALE="0.0"` 关闭从臂到主臂的 wrench 反馈，`1.0` 开启反馈。两种条件均保留位姿遥操作和 `ext_wrench_in_tcp` 数据采集。
 - `SLAVE_GRIPPER_ID`、左右触觉传感器序列号、相机序列号和机器人序列号均为真机相关配置，启动前必须核对。
 - Angler 编码器角度会在 `ANGLER_CLOSE_ANGLE` 到 `ANGLER_OPEN_ANGLE` 之间线性映射为 `SLAVE_CLOSE_WIDTH` 到 `SLAVE_OPEN_WIDTH`；宽度单位为米。
@@ -145,6 +142,17 @@ record_YYYYmmdd_HHMMSS_xxxxxx/
       rectify/*.png
       difference/*.png
       depth/*.png
+  timing/
+    cycle_index.npy
+    cycle_timestamps_host_s.npy
+    scheduled_monotonic_ns.npy
+    acquisition_started_monotonic_ns.npy
+    acquisition_completed_monotonic_ns.npy
+    cycle_duration_s.npy
+    deadline_overrun_s.npy
+    write_started_host_s.npy
+    write_completed_host_s.npy
+    source_completed_host_s.npz
   metadata.json
 ```
 
@@ -157,10 +165,12 @@ record_YYYYmmdd_HHMMSS_xxxxxx/
 - `tactile/{left,right}/marker_offset.npy`：每只手指相对各自启动基线的 marker 位移。
 - `tactile/{left,right}/force_torque.npy`：每只手指的六维 `ForceResultant` 力/力矩。
 - `tactile/{left,right}/force_norm.npy`：SDK 原始 `ForceNorm` 法向力分量场，不是由六维合力计算的标量范数。
-- `tactile/{left,right}/timestamps_host_s.npy`：每只传感器完成 SDK 读取后的主机时间戳。
+- 各相机、`robot`、wrench 和左右 tactile 的 `timestamps_host_s.npy`：同一个采集周期开始时分配的公共主机时间戳，数组逐元素完全一致。
+- `timing/write_completed_host_s.npy`：writer 完成该周期全部 PNG 写入并接收数值载荷的应用层完成时间；数值 `.npy` 在停止录制时统一生成。
+- `timing/source_completed_host_s.npz`：各设备实际读取完成时间，仅用于诊断顺序读取偏差，不参与数据对齐。
 - `metadata.json`：本次采集参数、设备信息、采样频率和数据格式说明。
 
-不同数据流的行数通常不同，不能按数组行号直接对应。左右触觉传感器在同一触觉周期内顺序读取，并非严格同时曝光；后续使用数据时应依据各自的 `timestamps_host_s.npy` 做最近邻、插值或窗口对齐。
+每个完整周期只提交一次，因此所有启用模态的行数、图像编号和公共时间戳一一对应，可以直接按数组行号使用，不需要最近邻、插值或额外时间对齐。设备接口仍然是顺序调用，公共时间戳表示同一逻辑周期，不表示相机和左右触觉严格同时曝光。
 
 ## Tools
 

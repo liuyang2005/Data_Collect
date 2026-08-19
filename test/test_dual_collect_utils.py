@@ -402,7 +402,7 @@ def test_dual_collect_rejects_non_comparison_feedback_scale(monkeypatch, capsys)
     assert "invalid choice" in capsys.readouterr().err
 
 
-def test_dual_collect_accepts_independent_stream_fps(monkeypatch):
+def test_dual_collect_rejects_independent_stream_fps(monkeypatch, capsys):
     dual_collect = import_dual_collect(monkeypatch)
     monkeypatch.setattr(
         sys,
@@ -426,11 +426,10 @@ def test_dual_collect_accepts_independent_stream_fps(monkeypatch):
         ],
     )
 
-    args = dual_collect.parse_args()
+    with pytest.raises(SystemExit):
+        dual_collect.parse_args()
 
-    assert args.camera_fps == 15
-    assert args.robot_fps == 100
-    assert args.force_fps == 200
+    assert "single-thread collection requires every stream" in capsys.readouterr().err
 
 
 def test_dual_collect_accepts_dual_finger_tactile_settings(monkeypatch):
@@ -450,8 +449,6 @@ def test_dual_collect_accepts_dual_finger_tactile_settings(monkeypatch):
             "data",
             "--use-tactile",
             "true",
-            "--tactile-fps",
-            "60",
             "--tactile-left-sensor-sn",
             "OG001453",
             "--tactile-right-sensor-sn",
@@ -464,7 +461,7 @@ def test_dual_collect_accepts_dual_finger_tactile_settings(monkeypatch):
     args = dual_collect.parse_args()
 
     assert args.use_tactile is True
-    assert args.tactile_fps == 60
+    assert args.tactile_fps is None
     assert args.tactile_left_sensor_sn == "OG001453"
     assert args.tactile_right_sensor_sn == "OG001455"
     assert args.tactile_mac_addr == "gripper_8a429d6ea337"
@@ -547,8 +544,6 @@ def test_build_metadata_describes_tactile_stream(monkeypatch):
             "data",
             "--use-tactile",
             "true",
-            "--tactile-fps",
-            "75",
             "--tactile-left-sensor-sn",
             "OG001453",
             "--tactile-right-sensor-sn",
@@ -561,7 +556,7 @@ def test_build_metadata_describes_tactile_stream(monkeypatch):
 
     metadata = dual_collect.build_metadata(args, {}, "tdk", "saved")
 
-    assert metadata["effective_tactile_fps"] == 75
+    assert metadata["effective_tactile_fps"] == 10
     assert metadata["tactile_source"] == "xensesdk.Sensor.OutputType"
     assert metadata["tactile_sensor_serials"] == {
         "left": "OG001453",
@@ -589,7 +584,7 @@ def test_build_metadata_describes_tactile_stream(monkeypatch):
     }
 
 
-def test_start_recording_passes_tactile_reader_and_independent_fps(
+def test_start_recording_passes_tactile_reader_and_one_collection_fps(
     tmp_path, monkeypatch
 ):
     dual_collect = import_dual_collect(monkeypatch)
@@ -613,12 +608,8 @@ def test_start_recording_passes_tactile_reader_and_independent_fps(
     args = types.SimpleNamespace(
         session_name=None,
         save_root=str(tmp_path),
-        fps=30,
+        fps=10,
         use_gripper=False,
-        camera_fps=15,
-        robot_fps=100,
-        force_fps=200,
-        tactile_fps=75,
     )
 
     _, _, collect_thread = dual_collect.start_recording(
@@ -637,7 +628,11 @@ def test_start_recording_passes_tactile_reader_and_independent_fps(
     assert captured["target"] is not dcu.collect_teleop_data
     assert captured["kwargs"]["worker"] is dcu.collect_teleop_data
     assert captured["kwargs"]["tactile_reader"] is tactile_reader
-    assert captured["kwargs"]["tactile_fps"] == 75
+    assert captured["kwargs"]["fps"] == 10
+    assert "camera_fps" not in captured["kwargs"]
+    assert "robot_fps" not in captured["kwargs"]
+    assert "force_fps" not in captured["kwargs"]
+    assert "tactile_fps" not in captured["kwargs"]
 
 
 def test_main_connects_passes_and_closes_tactile_reader(monkeypatch):
@@ -1133,65 +1128,23 @@ def test_stop_collection_propagates_background_collection_failure(
         )
 
 
-def test_collect_teleop_data_uses_independent_camera_robot_force_and_tactile_fps(
-    tmp_path, monkeypatch
-):
+def test_collect_teleop_data_rejects_independent_stream_fps(tmp_path):
     dcu = import_dual_collect_utils()
-    tactile_module = importlib.import_module("xense_tactile")
-    RecordingFastRateControl.rates = []
-    monkeypatch.setattr(dcu, "RateControl", RecordingFastRateControl)
-
-    fake_cv2 = types.SimpleNamespace(imwrite=lambda path, image: True)
-    monkeypatch.setitem(sys.modules, "cv2", fake_cv2)
-
-    class OneShotCamera:
-        def get(self):
-            return (
-                np.full((2, 2, 3), 1, dtype=np.uint8),
-                np.full((2, 2), 1, dtype=np.uint16),
-            )
-
-    cam_dir = tmp_path / "cam_test"
-    (cam_dir / "color").mkdir(parents=True)
-    (cam_dir / "depth").mkdir(parents=True)
-    stop_event = threading.Event()
-    state_reader = FakeStateReader(stop_event)
-
-    class TactileReader:
-        def read_frame(self):
-            time.sleep(0.001)
-            return make_dual_tactile_frame(tactile_module, 0)
-
-    dcu.collect_teleop_data(
-        state_reader=state_reader,
-        slave_gripper=None,
-        cameras={"cam_test": OneShotCamera()},
-        session_dir=str(tmp_path),
-        stop_event=stop_event,
-        fps=30,
-        camera_fps=5,
-        robot_fps=20,
-        force_fps=80,
-        tactile_reader=TactileReader(),
-        tactile_fps=60,
-        use_gripper=False,
-        status_period=0,
-    )
-
-    assert 5 in RecordingFastRateControl.rates
-    assert 20 in RecordingFastRateControl.rates
-    assert 80 in RecordingFastRateControl.rates
-    assert 60 in RecordingFastRateControl.rates
-    assert np.load(tmp_path / "robot" / "tcp_pose.npy").shape == (3, 8)
-    assert np.load(tmp_path / "robot" / "tcp_vel.npy").shape == (3, 6)
-    assert np.load(tmp_path / "robot" / "q.npy").shape == (3, 8)
-    assert (tmp_path / "ext_wrench_in_tcp.npy").exists()
-    assert (tmp_path / "ext_wrench_in_tcp_timestamps_host_s.npy").exists()
-    assert (cam_dir / "timestamps_host_s.npy").exists()
-    for side in ("left", "right"):
-        assert (tmp_path / "tactile" / side / "force_torque.npy").exists()
-        assert (tmp_path / "tactile" / side / "force_norm.npy").exists()
-        assert (tmp_path / "tactile" / side / "timestamps_host_s.npy").exists()
+    with pytest.raises(ValueError, match="requires every stream to use fps=10"):
+        dcu.collect_teleop_data(
+            state_reader=object(),
+            slave_gripper=None,
+            cameras={},
+            session_dir=str(tmp_path),
+            stop_event=threading.Event(),
+            fps=10,
+            camera_fps=5,
+            robot_fps=20,
+            force_fps=80,
+            tactile_fps=60,
+            use_gripper=False,
+            status_period=0,
+        )
 
 
 def test_collect_tactile_stream_writes_aligned_arrays_and_image_triplets(
@@ -1322,7 +1275,6 @@ def test_collect_teleop_data_propagates_tactile_reader_failure(tmp_path):
 
     class BlockingStateReader:
         def read_robot_sample(self):
-            assert tactile_called.wait(timeout=1.0)
             return (
                 np.zeros(3),
                 np.array([0.0, 0.0, 0.0, 1.0]),
@@ -1342,7 +1294,6 @@ def test_collect_teleop_data_propagates_tactile_reader_failure(tmp_path):
             use_gripper=False,
             status_period=0,
             tactile_reader=FailingTactileReader(),
-            tactile_fps=60,
         )
 
     assert stop_event.is_set()
