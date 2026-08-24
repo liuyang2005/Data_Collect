@@ -11,7 +11,7 @@ import numpy as np
 
 
 FPS = 30
-MAIN_CAMERA_SERIAL = "104122061018"
+MAIN_CAMERA_SERIAL = "104122063633"
 WRIST_CAMERA_SERIAL = "260322275475"
 # Keep these existing serials until the devices on the new machine are checked.
 D415_CAMERAS = {

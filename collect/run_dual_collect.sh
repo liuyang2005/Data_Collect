@@ -17,7 +17,7 @@ FIRST_SN="Rizon4R-062116"
 SECOND_SN="Rizon4R-062115"
 
 # Data collection
-SAVE_ROOT="/home/xense/haptic_exo_teleop_ws/Data/smoke_0810"
+SAVE_ROOT="/home/xense/haptic_exo_teleop_ws/Data/pin_0819_10hz"
 SESSION_NAME=""
 FPS="10"
 CAMERA_DEVICE_FPS="30"

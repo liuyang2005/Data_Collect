@@ -26,7 +26,7 @@ def parse_args():
     return parser.parse_args()
 
 
-FIXED_INITIAL_JOINTS_DEG = [0, -32, 0, 90, 0, 28, 0]
+FIXED_INITIAL_JOINTS_DEG = [-5.05, -26.45, -2.26, 115.93, 1.57, 50.56, -7.85]
 FIXED_INITIAL_GRIPPER_WIDTH = 0.08
 
 CUSTOM_HOME_JOINTS_DEG = {

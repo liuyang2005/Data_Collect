@@ -170,17 +170,28 @@ class TransparentCartesianTeleopPair:
 
     def stop(self) -> None:
         """Best-effort disengage, then stop the transparent TDK process."""
+        self._stop(release_native=False)
+
+    def close(self) -> None:
+        """Stop teleoperation and immediately release the native TDK handle."""
+        self._stop(release_native=True)
+
+    def _stop(self, release_native: bool) -> None:
         with self.lock:
+            cart_teleop = self.cart_teleop
+            if cart_teleop is None:
+                return
+
             if self.engaged:
                 try:
-                    self.cart_teleop.Engage(self.robot_pair_idx, False)
+                    cart_teleop.Engage(self.robot_pair_idx, False)
                 except Exception as exc:
                     logger.warning("Failed to disengage transparent teleop: %s", exc)
                 self.engaged = False
 
             if self.started:
                 try:
-                    self.cart_teleop.Stop()
+                    cart_teleop.Stop()
                 except Exception as exc:
                     logger.warning("Failed to stop transparent teleop: %s", exc)
                 finally:
@@ -188,16 +199,19 @@ class TransparentCartesianTeleopPair:
                     self.leader_robot = None
                     self.follower_robot = None
 
+            if release_native:
+                self.cart_teleop = None
+
     def __enter__(self):
         try:
             self.init()
         except Exception:
-            self.stop()
+            self.close()
             raise
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
-        self.stop()
+        self.close()
 
 
 class TeleopSlaveStateReader:
