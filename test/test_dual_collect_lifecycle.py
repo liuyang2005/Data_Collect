@@ -242,11 +242,11 @@ def install_main_fakes(
             events.append("tactile_close")
 
     class FakeTeleopPair:
-        instances = []
+        construct_count = 0
 
         def __init__(self, *_args, **_kwargs):
-            self.cycle = len(self.instances) + 1
-            self.instances.append(self)
+            type(self).construct_count += 1
+            self.cycle = type(self).construct_count
             events.append(f"tdk_construct_{self.cycle}")
 
         def __enter__(self):
@@ -261,6 +261,17 @@ def install_main_fakes(
         def set_wrench_feedback_scale(self, _factor):
             events.append(f"tdk_configure_{self.cycle}")
 
+        def __del__(self):
+            events.append(f"tdk_del_{self.cycle}")
+
+    class FakeStateReader:
+        def __init__(self, pair):
+            self.pair = pair
+            self.cycle = pair.cycle
+
+        def __del__(self):
+            events.append(f"state_reader_del_{self.cycle}")
+
     tactile_module = types.ModuleType("xense_tactile")
     tactile_module.XenseTactileReader = FakeTactileReader
     monkeypatch.setitem(sys.modules, "xense_tactile", tactile_module)
@@ -269,7 +280,7 @@ def install_main_fakes(
     transparent_module.SAVED_TCP_POSE_ORDER = "saved"
     transparent_module.TDK_TCP_POSE_ORDER = "tdk"
     transparent_module.TransparentCartesianTeleopPair = FakeTeleopPair
-    transparent_module.TeleopSlaveStateReader = lambda pair: ("state", pair.cycle)
+    transparent_module.TeleopSlaveStateReader = FakeStateReader
     monkeypatch.setitem(sys.modules, "transparent_teleop", transparent_module)
 
     monkeypatch.setattr(dual_collect, "parse_args", make_main_args)
@@ -324,8 +335,10 @@ def test_main_keeps_devices_alive_across_tdk_reset_cycles(monkeypatch):
     else:
         raise AssertionError("main() should exit through SystemExit")
 
-    assert len(setup.teleop_class.instances) == 2
+    assert setup.teleop_class.construct_count == 2
     assert setup.events.index("tdk_exit_1") < setup.events.index("home")
+    assert setup.events.index("state_reader_del_1") < setup.events.index("home")
+    assert setup.events.index("tdk_del_1") < setup.events.index("home")
     assert setup.events.index("home") < setup.events.index("tdk_construct_2")
     assert setup.events.count("camera_init") == 1
     assert len(setup.tactile_class.instances) == 1
@@ -350,7 +363,7 @@ def test_main_does_not_start_next_tdk_cycle_when_homing_fails(monkeypatch):
     else:
         raise AssertionError("main() should exit through SystemExit")
 
-    assert len(setup.teleop_class.instances) == 1
+    assert setup.teleop_class.construct_count == 1
     assert setup.events.count("home") == 1
     assert setup.camera.close_count == 1
 
@@ -369,7 +382,7 @@ def test_main_cleans_up_when_tdk_rebuild_fails(monkeypatch):
     else:
         raise AssertionError("main() should exit through SystemExit")
 
-    assert len(setup.teleop_class.instances) == 2
+    assert setup.teleop_class.construct_count == 2
     assert setup.events.index("home") < setup.events.index("tdk_enter_2")
     assert setup.camera.close_count == 1
     assert setup.master_gripper.close_count == 1

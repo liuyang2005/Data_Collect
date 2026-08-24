@@ -21,6 +21,9 @@ class FakeTransparentCartesianTeleopLAN:
     def Start(self):
         self.calls.append(("Start",))
 
+    def Stop(self):
+        self.calls.append(("Stop",))
+
     def SetWrenchFeedbackScalingFactor(self, pair_idx, factor):
         self.calls.append(("SetWrenchFeedbackScalingFactor", pair_idx, factor))
 
@@ -93,6 +96,21 @@ def test_rejects_feedback_scale_before_teleop_start(monkeypatch):
         assert "has not been started" in str(exc)
     else:
         raise AssertionError("expected feedback scaling before start to fail")
+
+
+def test_context_exit_stops_and_releases_native_tdk_handle(monkeypatch):
+    module = import_transparent_teleop(monkeypatch)
+    pair = module.TransparentCartesianTeleopPair("leader", "follower")
+    native_handle = pair.cart_teleop
+    native_handle.leader, native_handle.follower = module._test_instances
+
+    with pair:
+        pass
+
+    assert native_handle.calls[-1] == ("Stop",)
+    assert pair.cart_teleop is None
+    assert pair.leader_robot is None
+    assert pair.follower_robot is None
 
 
 def test_launcher_selects_no_feedback_and_new_xense_ids():

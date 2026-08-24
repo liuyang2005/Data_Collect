@@ -624,31 +624,41 @@ def main() -> None:
         cameras = init_cameras(CAMERA_PROFILES, args.camera_fps or args.fps)
 
         while True:
-            with TransparentCartesianTeleopPair(
-                args.first_sn,
-                args.second_sn,
-                network_interface_whitelist=args.network_interface,
-            ) as teleop_pair:
-                teleop_pair.set_wrench_feedback_scale(args.wrench_feedback_scale)
-                state_reader = TeleopSlaveStateReader(teleop_pair)
-                ready_for_exit_homing = True
-
-                outcome = run_keyboard_loop(
-                    args,
-                    teleop_pair,
-                    state_reader,
-                    cameras,
-                    master_gripper,
-                    slave_gripper,
-                    tactile_reader,
-                    D415_CAMERAS,
-                    TDK_TCP_POSE_ORDER,
-                    SAVED_TCP_POSE_ORDER,
-                    args.gripper_eps,
-                    args.gripper_wait_time,
-                    args.null_space_period,
-                    args.use_gripper,
+            teleop_pair = None
+            state_reader = None
+            try:
+                teleop_pair = TransparentCartesianTeleopPair(
+                    args.first_sn,
+                    args.second_sn,
+                    network_interface_whitelist=args.network_interface,
                 )
+                with teleop_pair:
+                    teleop_pair.set_wrench_feedback_scale(args.wrench_feedback_scale)
+                    state_reader = TeleopSlaveStateReader(teleop_pair)
+                    ready_for_exit_homing = True
+
+                    outcome = run_keyboard_loop(
+                        args,
+                        teleop_pair,
+                        state_reader,
+                        cameras,
+                        master_gripper,
+                        slave_gripper,
+                        tactile_reader,
+                        D415_CAMERAS,
+                        TDK_TCP_POSE_ORDER,
+                        SAVED_TCP_POSE_ORDER,
+                        args.gripper_eps,
+                        args.gripper_wait_time,
+                        args.null_space_period,
+                        args.use_gripper,
+                    )
+            finally:
+                # The state reader owns a reference to the TDK wrapper. Drop
+                # both references before homing or constructing the next TDK
+                # instance so the old native handle cannot outlive its cycle.
+                state_reader = None
+                teleop_pair = None
 
             if outcome != KEYBOARD_RESET:
                 break
